@@ -124,7 +124,7 @@ Gold compacta as versões pelos atributos rastreados (`segment`, `city`, `state`
 | Tabela de controle `silver_processed_batches` (entidade, lote) | só lotes pendentes são lidos; o lote é marcado **depois** das gravações |
 | Clientes: MERGE insert-only em (`customer_id`, `effective_from`) | versão nova entra uma vez |
 | Demais: MERGE por chave de negócio | lote mais novo com conteúdo diferente atualiza (SCD1); conteúdo igual não muda nada |
-| Quarentena: insert-only por (impressão digital da linha, motivos) | reprocessar o lote não duplica |
+| Quarentena: insert-only por (impressão digital da linha, motivos); impressão = SHA-256 dos valores entregues e do lote, NULL com marcador próprio (`standardize.fingerprint`) | reprocessar o lote não duplica; linhas que diferem só na posição de um NULL não colapsam |
 | `BatchCounts.reconcile()` | `linhas do Bronze = válidas + quarentena + duplicatas`, cada parcela contada do seu próprio DataFrame; divergência é CRITICAL e para antes de gravar |
 
 Um lote interrompido antes de ser marcado é processado de novo; os MERGEs ignoram o que já têm.

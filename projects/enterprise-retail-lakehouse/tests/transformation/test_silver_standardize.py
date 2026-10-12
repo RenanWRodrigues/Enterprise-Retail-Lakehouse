@@ -317,6 +317,19 @@ def test_shipment_rules(spark: SparkSession) -> None:
     assert outcome.quarantine == {"SHP-BACKWARDS": ["delivered_before_shipped"]}
 
 
+def test_row_shifted_into_a_null_column_is_not_an_exact_duplicate(spark: SparkSession) -> None:
+    """Regression: xxhash64 skips NULLs, so (…, NULL, "12.50") and (…, "12.50", NULL) hashed
+    alike and one row vanished as a "duplicate". A CSV row missing a delimiter looks like this."""
+    in_transit = _shipment(shipment_id="SHP-SHIFT", shipment_status="in_transit", delivered_at=None)
+    shifted = in_transit | {"delivered_at": "12.50", "freight_amount": None}
+
+    outcome = _outcome(spark, "shipments", [in_transit, shifted])
+
+    assert outcome.duplicate_rows == 0
+    assert outcome.valid["SHP-SHIFT"]["freight_amount"] == Decimal("12.50")
+    assert outcome.quarantine == {"SHP-SHIFT": ["invalid__delivered_at", "missing__freight_amount"]}
+
+
 def test_stock_movement_rules(spark: SparkSession) -> None:
     movement: dict[str, str | None] = {
         "movement_id": "MOV-1",

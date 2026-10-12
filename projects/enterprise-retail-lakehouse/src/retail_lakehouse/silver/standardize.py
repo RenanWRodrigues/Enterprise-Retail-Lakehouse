@@ -76,6 +76,7 @@ _QUARANTINE_OWN: Final = (ROW_HASH_COLUMN, FAILED_CHECKS_COLUMN, EXECUTION_TIMES
 _RANK: Final = "_silver_rank"
 _CONTENT: Final = "_silver_content"
 _VERSIONS: Final = "_silver_versions"
+_SEPARATOR, _NULL = "\u001f", "\u0000"  # unit separator; a NULL marker distinct from ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +124,16 @@ def quarantine_table_schema(entity: str) -> StructType:
             StructField(EXECUTION_TIMESTAMP_COLUMN, TimestampType(), False),
         ]
     )
+
+
+def fingerprint(*columns: str) -> Column:
+    """SHA-256 (hex) of the column values in order, NULL marked in its own position.
+
+    Not ``xxhash64``: it skips NULLs, so ``("a", NULL, "b")`` and ``("a", "b", NULL)`` hash
+    alike and a row shifted into a NULL column would collapse as an exact duplicate.
+    """
+    parts = [F.coalesce(F.col(column).cast("string"), F.lit(_NULL)) for column in columns]
+    return F.sha2(F.concat_ws(_SEPARATOR, *parts), 256)
 
 
 def _source(name: str) -> str:
@@ -206,7 +217,7 @@ def prepare(bronze: DataFrame, entity: str) -> DataFrame:
     renamed = bronze.select(
         *(F.col(name).alias(f"{SOURCE_PREFIX}{name}") for name in names),
         *METADATA_COLUMNS,
-        F.xxhash64(*names, "_batch_id").cast("string").alias(ROW_HASH_COLUMN),
+        fingerprint(*names, "_batch_id").alias(ROW_HASH_COLUMN),
     )
     typed = renamed.select("*", *(_typed(c) for c in silver_source_columns(entity)))
     return typed.select("*", *_derived(entity))
@@ -240,7 +251,7 @@ def standardize(
     checks = [*contract_rules(entity), *silver_row_rules(entity)]
     valid, rejected = split_by_quality(delivered, checks, execution_timestamp=execution_timestamp)
 
-    contents = F.xxhash64(*SILVER_SCHEMAS[entity].fieldNames())
+    contents = fingerprint(*SILVER_SCHEMAS[entity].fieldNames())
     tagged = valid.withColumn(_CONTENT, contents).withColumn(
         _VERSIONS, F.size(F.collect_set(_CONTENT).over(Window.partitionBy(*key)))
     )
