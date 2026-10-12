@@ -1,0 +1,22 @@
+# Synthetic IoT sources — see docs/DATA_GENERATION.md.
+# 120 equipment x ~6.25 sensors x 30 days at 1-minute sampling ~= 32.4 million readings.
+
+[generation]
+seed = 20250101
+start = 2025-01-01T00:00:00Z
+days = 30
+sampling_interval_seconds = 60
+equipment_per_type = 30
+failure_rate_per_year = 6.0
+preventive_interval_days = 14
+batch_id = "initial"
+
+[anomalies]
+spike_rate = 0.0005
+impossible_rate = 0.0001
+duplicate_rate = 0.002
+out_of_order_rate = 0.003
+late_rate = 0.001
+comm_outages_per_sensor_month = 1.0
+drift_sensor_share = 0.05
+lateness_threshold_minutes = 60

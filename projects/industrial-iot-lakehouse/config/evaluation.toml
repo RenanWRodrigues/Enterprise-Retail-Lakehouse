@@ -1,0 +1,21 @@
+# Reproducible detector evaluation (docs/iot/evaluation/). Same file => same dataset => same results.
+# Small on purpose: 16 equipment, 30 days at 15-minute sampling (~0.3M readings), more failures
+# than the production default so the metrics rest on more than a handful of events.
+
+[generation]
+seed = 20250101
+start = 2025-01-01
+days = 30
+sampling_interval_seconds = 900
+equipment_per_type = 4
+failure_rate_per_year = 24.0
+drift_sensor_share = 0.1
+
+[detector]
+thresholds = [0.05, 0.08, 0.10, 0.15, 0.20, 0.30]  # relative deviation from the baseline
+baseline_days = 7
+min_history_days = 3
+
+[matching]
+tolerance_before_hours = 0   # the window starts at the degradation start (ground truth)
+tolerance_after_hours = 24   # alerts on the failure day still count

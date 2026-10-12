@@ -1,0 +1,15 @@
+# IoT Bronze per environment: landing root (local path or Unity Catalog Volume) and Bronze schema.
+# target_namespace: "schema" (local Spark catalog) or "catalog.schema" (Unity Catalog).
+
+[local]
+landing_root = "data/landing/iot"
+target_namespace = "iot_bronze"
+
+[databricks]
+# Volume and catalog names are confirmed by the preflight (docs/databricks/DEPLOYMENT_GUIDE.md).
+landing_root = "/Volumes/iot/landing/files"
+target_namespace = "iot.bronze"
+
+[smoke]
+landing_root = "/Volumes/workspace/smoke_iot/landing"
+target_namespace = "workspace.smoke_iot_bronze"

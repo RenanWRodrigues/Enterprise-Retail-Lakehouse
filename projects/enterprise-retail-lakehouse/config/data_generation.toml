@@ -1,0 +1,134 @@
+# Synthetic retail source systems — see docs/DATA_GENERATION.md.
+# Same file + same seed => byte-identical landing zone.
+
+[generation]
+seed = 20240101
+start_date = 2024-01-01
+end_date = 2025-12-31        # 24 months
+customers = 50000
+products = 2000
+stores = 30                  # 29 physical + 1 online distribution centre
+suppliers = 100
+orders = 100000              # ~326k order items (1-8 items per order, mean 3.26)
+batch_id = "initial"
+
+# Intentional anomalies. rate = share of records selected (deterministic hash per record).
+# Set rate = 0 (or remove the entry) to disable. Every hit is registered in _anomalies.csv.
+
+# --- duplicates ---------------------------------------------------------------------------
+[[anomalies]]
+type = "duplicate_record"
+dataset = "customers"
+rate = 0.005
+
+[[anomalies]]
+type = "duplicate_record"
+dataset = "order_items"
+rate = 0.001
+
+[[anomalies]]
+type = "duplicate_payment"
+dataset = "payments"
+rate = 0.003
+
+# --- nulls --------------------------------------------------------------------------------
+[[anomalies]]
+type = "null_value"
+dataset = "customers"
+column = "email"
+rate = 0.01
+
+[[anomalies]]
+type = "null_value"
+dataset = "customers"
+column = "birth_date"
+rate = 0.02
+
+[[anomalies]]
+type = "null_value"
+dataset = "products"
+column = "supplier_id"
+rate = 0.005
+
+# --- invalid e-mail -----------------------------------------------------------------------
+[[anomalies]]
+type = "invalid_email"
+dataset = "customers"
+column = "email"
+rate = 0.01
+
+[[anomalies]]
+type = "invalid_email"
+dataset = "suppliers"
+column = "email"
+rate = 0.03
+
+# --- negative price -----------------------------------------------------------------------
+[[anomalies]]
+type = "negative_price"
+dataset = "products"
+column = "list_price"
+rate = 0.005
+
+[[anomalies]]
+type = "negative_price"
+dataset = "order_items"
+column = "unit_price"
+rate = 0.0005
+
+# --- invalid quantity ---------------------------------------------------------------------
+[[anomalies]]
+type = "invalid_quantity"
+dataset = "order_items"
+column = "quantity"
+rate = 0.001
+
+[[anomalies]]
+type = "invalid_quantity"
+dataset = "inventory_movements"
+column = "quantity"
+rate = 0.0005
+
+# --- orphan foreign keys ------------------------------------------------------------------
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "products"
+column = "category_id"
+rate = 0.005
+
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "orders"
+column = "customer_id"
+rate = 0.002
+
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "order_items"
+column = "product_id"
+rate = 0.0005
+
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "payments"
+column = "order_id"
+rate = 0.001
+
+# --- invalid dates ------------------------------------------------------------------------
+[[anomalies]]
+type = "invalid_date"
+dataset = "orders"
+column = "order_timestamp"
+rate = 0.001
+
+[[anomalies]]
+type = "invalid_date"
+dataset = "customers"
+column = "birth_date"
+rate = 0.002
+
+[[anomalies]]
+type = "invalid_date"
+dataset = "shipments"
+column = "delivered_at"
+rate = 0.003

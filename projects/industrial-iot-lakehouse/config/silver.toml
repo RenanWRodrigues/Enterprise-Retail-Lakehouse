@@ -1,0 +1,18 @@
+# IoT Silver per environment. late_after_minutes: a reading whose historian arrival is later than
+# its event by more than this is flagged is_late (kept, never dropped). Same threshold as the
+# generator's lateness (config/data_generation.toml: lateness_threshold_minutes).
+
+[local]
+bronze_namespace = "iot_bronze"
+silver_namespace = "iot_silver"
+late_after_minutes = 60
+
+[databricks]
+bronze_namespace = "iot.bronze"
+silver_namespace = "iot.silver"
+late_after_minutes = 60
+
+[smoke]
+bronze_namespace = "workspace.smoke_iot_bronze"
+silver_namespace = "workspace.smoke_iot_silver"
+late_after_minutes = 60

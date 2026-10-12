@@ -1,0 +1,177 @@
+[project]
+name = "databricks-lakehouse-portfolio"
+version = "0.1.0"
+description = "Portfolio of three Databricks Lakehouses: Enterprise Retail, Industrial IoT and Brazilian Financial Data."
+readme = "README.md"
+requires-python = ">=3.12"
+# No runtime dependencies: on Databricks, Spark is provided by the runtime.
+dependencies = []
+
+# PEP 735 dependency groups. Install with: python -m pip install --group dev
+# (no build backend is declared yet because there is no package to build).
+[dependency-groups]
+dev = [
+    # Exact pins (CLAUDE.md reproducibility; tests/contract/test_pinned_dependencies.py): the
+    # versions validated on Windows and Linux on 2026-10-07. Upgrade deliberately, in one change.
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "coverage==7.16.2",
+    "ruff==0.16.10",  # equal to the rev of ruff-pre-commit
+    "mypy==2.4.0",
+    # Git hooks with pinned tool versions (.pre-commit-config.yaml); CI runs the same hooks.
+    "pre-commit==4.6.2",
+    # Parses the CI workflow in tests/contract/test_ci_workflow.py (also a pre-commit dependency).
+    "pyyaml==6.0.3",
+    # Local Spark for transformation/data_quality tests. 4.0.x = Spark of Databricks
+    # Runtime 17 and supports Java 17/21. Re-pin to the serverless runtime version
+    # once verified in the workspace (docs/ROADMAP.md, Fase 1).
+    "pyspark==4.0.4",
+    # Delta Lake for Bronze integration tests (4.0.x <-> Spark 4.0). Its JARs are fetched
+    # into the Ivy cache on first use; Delta tests run on Linux (docker/tests.Dockerfile).
+    "delta-spark==4.0.1",
+]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests", "shared/tests", "projects"]
+# Source roots are put on sys.path here, so every test imports packages the same
+# way they are imported in production: `import retail_lakehouse`, `import lakehouse_common`.
+# Phase 1 replaces this with installable packages without changing any import.
+pythonpath = [
+    "shared/src",
+    "projects/enterprise-retail-lakehouse/src",
+    "projects/industrial-iot-lakehouse/src",
+    "projects/brazilian-financial-lakehouse/src",
+]
+# importlib mode: test files with the same name may exist in several projects.
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+markers = [
+    "unit: pure-Python logic with no Spark session",
+    "transformation: PySpark/Spark SQL transformations on small in-memory DataFrames",
+    "data_quality: data quality rules and expectations",
+    "contract: schema, data contract and repository governance checks",
+    "integration: end-to-end pipeline runs across layers (slow)",
+]
+
+# ---------------------------------------------------------------- coverage
+# Opt-in: `pytest --cov`. Not in addopts, so running one file does not trip fail_under.
+[tool.coverage.run]
+branch = true
+source_pkgs = [
+    "retail_lakehouse",
+    "iot_lakehouse",
+    "financial_lakehouse",
+    "lakehouse_common",
+    "lakehouse_testing",
+]
+
+[tool.coverage.report]
+# Floor, not target: critical logic (quality, transformations, idempotent writes) must be
+# covered by meaningful tests; never add tests only to move this number.
+fail_under = 85
+show_missing = true
+skip_empty = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "build", "dist"]
+# First-party source roots (import sorting groups these packages correctly).
+src = [
+    ".",
+    "shared/src",
+    "projects/enterprise-retail-lakehouse/src",
+    "projects/industrial-iot-lakehouse/src",
+    "projects/brazilian-financial-lakehouse/src",
+]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "N",        # pep8-naming (snake_case)
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "SIM",      # simplify
+    "PTH",      # prefer pathlib
+    "S",        # bandit (security)
+    "T20",      # no print(); use logging
+    "DTZ",      # timezone-aware datetimes
+    "ANN",      # type hints
+    "PL",       # pylint (includes magic-number checks)
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**/*.py" = [
+    "S101",     # assert is the point of a test
+    "PLR2004",  # literal values are expected in assertions
+    "S311",     # seeded PRNGs drive deterministic test data
+    "PLR0913",  # pytest injects fixtures as arguments
+    "ANN401",   # fixtures whose classes live in conftest (not importable) are typed Any
+    "PLR0917",
+]
+
+"**/notebooks/**/*.py" = [
+    "F821",     # spark, dbutils and display are provided by the Databricks runtime
+    "E402",     # imports follow the sys.path cell until the package is installable
+]
+"**/synthetic/*.py" = [
+    "S311",     # seeded, reproducible PRNG is the point of a synthetic data generator
+]
+
+[tool.ruff.lint.pep8-naming]
+# `from pyspark.sql import functions as F` is the PySpark convention used in all docs.
+extend-ignore-names = ["F"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = [
+    "shared/src",
+    "projects/enterprise-retail-lakehouse/src",
+    # Project roots as package bases: project test modules become `tests.<category>.<file>`
+    # and the project conftest `tests.conftest` (no clash with the root `conftest`).
+    "projects/enterprise-retail-lakehouse",
+    "projects/industrial-iot-lakehouse/src",
+    "projects/industrial-iot-lakehouse",
+    "projects/brazilian-financial-lakehouse/src",
+    "projects/brazilian-financial-lakehouse",
+]
+explicit_package_bases = true
+# Test directories are listed explicitly as they gain test files (mypy rejects
+# directories without .py files). Test file names must be unique across the monorepo.
+files = [
+    "conftest.py",
+    "tests",
+    "shared/tests",
+    "projects/enterprise-retail-lakehouse/tests",
+    "projects/industrial-iot-lakehouse/tests",
+    "projects/brazilian-financial-lakehouse/tests",
+    "shared/src",
+    "projects/enterprise-retail-lakehouse/src",
+    "projects/industrial-iot-lakehouse/src",
+    "projects/brazilian-financial-lakehouse/src",
+]
+# The native parser loads a compiled DLL (ast_serialize) that Windows Smart App
+# Control blocks on the author's machine. The pure-Python parser is equivalent,
+# only slower. Revisit if the policy changes or once CI runs on Linux.
+native_parser = false
+# Each project has a tests/conftest.py; both would map to the module `tests.conftest`.
+exclude = [
+    'projects/industrial-iot-lakehouse/tests/conftest\.py$',
+    'projects/brazilian-financial-lakehouse/tests/conftest\.py$',
+]

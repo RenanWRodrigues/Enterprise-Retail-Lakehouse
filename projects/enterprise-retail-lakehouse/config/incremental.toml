@@ -1,0 +1,23 @@
+# Incremental (CDC) batches on top of a full batch (docs/DATA_GENERATION.md, "Modo incremental").
+# Same file => same batches: batch N replays the master-data changes of the batches before it.
+# Windows follow each other: batch_002 covers the day after the base end_date to its as_of.
+
+base_config = "data_generation_smoke.toml"   # the full batch these batches continue
+
+[[batches]]
+batch_id = "batch_002"
+as_of = 2026-01-15
+customer_change_rate = 0.05   # 5% of the customers change segment and/or city
+product_change_rate = 0.03    # 3% of the active products change price or category
+new_customers = 6
+new_products = 3
+orders = 40
+
+[[batches]]
+batch_id = "batch_003"
+as_of = 2026-01-31
+customer_change_rate = 0.05
+product_change_rate = 0.0
+new_customers = 0
+new_products = 2
+orders = 30

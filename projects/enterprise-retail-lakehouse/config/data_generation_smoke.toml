@@ -1,0 +1,136 @@
+# Synthetic retail source systems — SMOKE TEST size. Generated from data_generation.toml:
+# keep the anomaly list identical (tests/unit/test_smoke_generation.py checks it).
+
+[generation]
+# Databricks smoke test (docs/databricks/DEPLOYMENT_GUIDE.md): the full configuration's anomaly
+# rates on a landing of a few thousand rows, the size used by the integration tests.
+seed = 20240101
+start_date = 2024-01-01
+end_date = 2025-12-31
+customers = 120
+products = 60
+stores = 4
+suppliers = 20
+orders = 300
+batch_id = "initial"
+
+# Intentional anomalies. rate = share of records selected (deterministic hash per record).
+# Set rate = 0 (or remove the entry) to disable. Every hit is registered in _anomalies.csv.
+
+# --- duplicates ---------------------------------------------------------------------------
+[[anomalies]]
+type = "duplicate_record"
+dataset = "customers"
+rate = 0.005
+
+[[anomalies]]
+type = "duplicate_record"
+dataset = "order_items"
+rate = 0.001
+
+[[anomalies]]
+type = "duplicate_payment"
+dataset = "payments"
+rate = 0.003
+
+# --- nulls --------------------------------------------------------------------------------
+[[anomalies]]
+type = "null_value"
+dataset = "customers"
+column = "email"
+rate = 0.01
+
+[[anomalies]]
+type = "null_value"
+dataset = "customers"
+column = "birth_date"
+rate = 0.02
+
+[[anomalies]]
+type = "null_value"
+dataset = "products"
+column = "supplier_id"
+rate = 0.005
+
+# --- invalid e-mail -----------------------------------------------------------------------
+[[anomalies]]
+type = "invalid_email"
+dataset = "customers"
+column = "email"
+rate = 0.01
+
+[[anomalies]]
+type = "invalid_email"
+dataset = "suppliers"
+column = "email"
+rate = 0.03
+
+# --- negative price -----------------------------------------------------------------------
+[[anomalies]]
+type = "negative_price"
+dataset = "products"
+column = "list_price"
+rate = 0.005
+
+[[anomalies]]
+type = "negative_price"
+dataset = "order_items"
+column = "unit_price"
+rate = 0.0005
+
+# --- invalid quantity ---------------------------------------------------------------------
+[[anomalies]]
+type = "invalid_quantity"
+dataset = "order_items"
+column = "quantity"
+rate = 0.001
+
+[[anomalies]]
+type = "invalid_quantity"
+dataset = "inventory_movements"
+column = "quantity"
+rate = 0.0005
+
+# --- orphan foreign keys ------------------------------------------------------------------
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "products"
+column = "category_id"
+rate = 0.005
+
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "orders"
+column = "customer_id"
+rate = 0.002
+
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "order_items"
+column = "product_id"
+rate = 0.0005
+
+[[anomalies]]
+type = "orphan_foreign_key"
+dataset = "payments"
+column = "order_id"
+rate = 0.001
+
+# --- invalid dates ------------------------------------------------------------------------
+[[anomalies]]
+type = "invalid_date"
+dataset = "orders"
+column = "order_timestamp"
+rate = 0.001
+
+[[anomalies]]
+type = "invalid_date"
+dataset = "customers"
+column = "birth_date"
+rate = 0.002
+
+[[anomalies]]
+type = "invalid_date"
+dataset = "shipments"
+column = "delivered_at"
+rate = 0.003

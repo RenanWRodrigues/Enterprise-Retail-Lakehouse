@@ -1,0 +1,62 @@
+# --- Secrets & local credentials (never commit) ---
+.env
+.env.*
+!.env.example
+.databrickscfg
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.netrc
+.aws/
+credentials*.json
+secrets/
+# Logs may carry URLs, error messages or data samples
+*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+venv/
+
+# --- Tooling caches & reports ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# --- Local Spark / Delta artefacts ---
+spark-warehouse/
+metastore_db/
+derby.log
+_checkpoints/
+*.crc
+
+# --- Databricks ---
+.databricks/
+
+# --- Claude Code (local, per-user settings) ---
+.claude/settings.local.json
+
+# --- Notebook checkpoints (copies with outputs: displayed data may be sensitive) ---
+.ipynb_checkpoints/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- Generated landing zones (synthetic data, reproducible from config) ---
+data/

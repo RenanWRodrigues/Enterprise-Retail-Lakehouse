@@ -1,0 +1,11 @@
+# Silver and Gold tables per environment (Bronze comes from config/ingestion.toml).
+
+[databricks]
+bronze_table = "financial.bronze.bronze_indicator_observations"
+silver_namespace = "financial.silver"
+gold_namespace = "financial.gold"
+
+[smoke]
+bronze_table = "workspace.smoke_financial_bronze.bronze_indicator_observations"
+silver_namespace = "workspace.smoke_financial_silver"
+gold_namespace = "workspace.smoke_financial_gold"

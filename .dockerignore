@@ -1,0 +1,3 @@
+# The test image only needs pyproject.toml; the repository is mounted at run time.
+*
+!pyproject.toml

@@ -1,0 +1,60 @@
+# Git hooks: `python -m pre_commit install --install-hooks` (once, with the .venv active).
+# Commit: hygiene, secrets, ruff, mypy. Push: unit tests (pure Python, no Spark, no network).
+# CI runs the same hooks (`pre-commit run --all-files`), so local and CI results agree.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10 # keep equal to the ruff installed by the dev group
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # Tools from the project environment (same versions as `pip install --group dev`).
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict)
+        entry: python -m mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+      # Both project conftests map to the module `tests.conftest`, so the main run excludes
+      # them (pyproject [tool.mypy] exclude); checked here one at a time.
+      - id: mypy-iot-conftest
+        name: mypy (iot tests/conftest.py)
+        entry: python -m mypy projects/industrial-iot-lakehouse/tests/conftest.py
+        language: system
+        files: ^projects/industrial-iot-lakehouse/tests/conftest\.py$
+        pass_filenames: false
+      - id: mypy-financial-conftest
+        name: mypy (financial tests/conftest.py)
+        entry: python -m mypy projects/brazilian-financial-lakehouse/tests/conftest.py
+        language: system
+        files: ^projects/brazilian-financial-lakehouse/tests/conftest\.py$
+        pass_filenames: false
+      - id: pytest-unit
+        name: unit tests
+        entry: python -m pytest -m unit -q -p no:cacheprovider
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]

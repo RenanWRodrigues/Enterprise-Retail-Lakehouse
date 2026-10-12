@@ -1,0 +1,130 @@
+# CI: install -> lint -> unit -> transformation -> data quality -> coverage, plus integration.
+# Every step is a Makefile target, the same commands used locally (`make help`).
+# No secrets, no Databricks workspace, no cloud credentials: everything runs on the runner
+# (local Spark/Delta where needed). Public APIs are never called: HTTP is faked in tests.
+# Integration (local Spark + Delta, slow) is a separate job off the main chain; tests that need
+# a Databricks workspace or a live API do not exist and must never run here.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    name: lint (ruff, mypy, repository hygiene)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: make lint
+        run: make lint
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: pre-commit hygiene and secret hooks (ruff/mypy already ran above)
+        env:
+          SKIP: ruff-check,ruff-format,mypy,mypy-iot-conftest,mypy-financial-conftest
+        run: .venv/bin/python -m pre_commit run --all-files --show-diff-on-failure
+
+  unit:
+    name: unit tests (pure Python, no Spark, no network)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: make test-unit
+        run: make test-unit COV=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: .coverage.unit
+          include-hidden-files: true
+
+  transformation:
+    name: transformation tests (local Spark)
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          java: "true"
+      - name: make test-transformation
+        run: make test-transformation COV=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-transformation
+          path: .coverage.transformation
+          include-hidden-files: true
+
+  data-quality:
+    name: data quality + contract tests (local Spark)
+    needs: transformation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          java: "true"
+      - name: make test-quality
+        run: make test-quality COV=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-quality
+          path: .coverage.quality
+          include-hidden-files: true
+
+  integration:
+    name: integration tests (local Spark + Delta, separate)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          java: "true"
+      - name: make test-integration
+        run: make test-integration COV=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: .coverage.integration
+          include-hidden-files: true
+
+  coverage:
+    name: coverage (combined, fail_under from pyproject)
+    needs: [data-quality, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "coverage[toml]==7.16.2"  # same pin as the dev group
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - name: make coverage-report
+        run: make coverage-report PYTHON=python

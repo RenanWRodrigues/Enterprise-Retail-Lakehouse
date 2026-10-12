@@ -1,0 +1,17 @@
+# Bronze ingestion settings per environment. No secrets here (none are needed).
+# target_namespace: "schema" (local Spark catalog) or "catalog.schema" (Unity Catalog).
+
+[local]
+landing_root = "data/landing/retail"
+target_namespace = "retail_bronze"
+
+[databricks]
+# Volume and catalog names are confirmed in Phase 1 (Free Edition catalog limits).
+landing_root = "/Volumes/retail/landing/files"
+target_namespace = "retail.bronze"
+
+[smoke]
+# Databricks smoke test: isolated from [databricks] (docs/databricks/DEPLOYMENT_GUIDE.md).
+# Catalog "workspace" is the Free Edition default; the preflight notebook confirms it.
+landing_root = "/Volumes/workspace/smoke_retail/landing"
+target_namespace = "workspace.smoke_retail_bronze"

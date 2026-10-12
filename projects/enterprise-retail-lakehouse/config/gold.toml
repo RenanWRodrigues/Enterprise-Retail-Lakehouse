@@ -1,0 +1,21 @@
+# Gold build settings per environment. The calendar must cover every fact date
+# (order window + payments/deliveries shortly after it).
+
+[local]
+silver_namespace = "retail_silver"
+gold_namespace = "retail_gold"
+calendar_start = 2024-01-01
+calendar_end = 2026-01-31
+
+[databricks]
+# Catalog names are confirmed in Phase 1 (Free Edition catalog limits).
+silver_namespace = "retail.silver"
+gold_namespace = "retail.gold"
+calendar_start = 2024-01-01
+calendar_end = 2026-01-31
+
+[smoke]
+silver_namespace = "workspace.smoke_retail_silver"
+gold_namespace = "workspace.smoke_retail_gold"
+calendar_start = 2024-01-01
+calendar_end = 2026-01-31

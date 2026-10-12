@@ -1,0 +1,16 @@
+# Silver build settings per environment. No secrets here (none are needed).
+# Namespaces: "schema" (local Spark catalog) or "catalog.schema" (Unity Catalog). They must match
+# bronze.toml (target_namespace) and gold.toml (silver_namespace).
+
+[local]
+bronze_namespace = "retail_bronze"
+silver_namespace = "retail_silver"
+
+[databricks]
+# Catalog names are confirmed in Phase 1 (Free Edition catalog limits).
+bronze_namespace = "retail.bronze"
+silver_namespace = "retail.silver"
+
+[smoke]
+bronze_namespace = "workspace.smoke_retail_bronze"
+silver_namespace = "workspace.smoke_retail_silver"

@@ -1,0 +1,20 @@
+# IoT Gold per environment. The observation period [period_start, period_end) bounds every
+# reliability indicator (docs/GOLD.md, "Período de observação"); it matches the generated window.
+
+[local]
+silver_namespace = "iot_silver"
+gold_namespace = "iot_gold"
+period_start = 2025-01-01
+period_end = 2025-01-31
+
+[databricks]
+silver_namespace = "iot.silver"
+gold_namespace = "iot.gold"
+period_start = 2025-01-01
+period_end = 2025-01-31
+
+[smoke]
+silver_namespace = "workspace.smoke_iot_silver"
+gold_namespace = "workspace.smoke_iot_gold"
+period_start = 2025-01-01
+period_end = 2025-01-31
