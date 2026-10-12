@@ -60,3 +60,6 @@ Thumbs.db
 
 # --- Generated landing zones (synthetic data, reproducible from config) ---
 data/
+
+.claude/
+CLAUDE.md
