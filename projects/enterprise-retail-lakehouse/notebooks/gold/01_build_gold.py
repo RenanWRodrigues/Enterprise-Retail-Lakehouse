@@ -14,21 +14,28 @@ dbutils.widgets.dropdown("environment", "databricks", ["databricks", "smoke", "l
 
 # COMMAND ----------
 
-# Until the package is installable (Phase 1), import it from the repository (Git folder).
-import sys
+# MAGIC %pip install --quiet --no-deps /Volumes/workspace/libs/wheels/databricks_lakehouse_portfolio-0.1.0-py3-none-any.whl
+
+# COMMAND ----------
+
+dbutils.library.restartPython()  # the installed packages are importable from here on
+
+# COMMAND ----------
+
 from pathlib import Path
 
-PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/gold -> project root
-REPO_ROOT = PROJECT_ROOT.parents[1]
-sys.path[:0] = [str(PROJECT_ROOT / "src"), str(REPO_ROOT / "shared" / "src")]
+PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/gold -> project root (config files)
+REPO_ROOT = PROJECT_ROOT.parents[1]  # shared config files
 
 # COMMAND ----------
 
 from datetime import UTC, datetime
 
-from lakehouse_common.observability import DeltaObservabilitySink
+from lakehouse_common.observability import new_run_id
+from lakehouse_common.observability.ops import load_ops_namespace, standard_sink
 from retail_lakehouse.gold import build_gold, load_gold_settings
 from retail_lakehouse.gold.build import REQUIRED_SILVER
+from retail_lakehouse.gold.inventory import inventory_reconciliation
 from retail_lakehouse.gold.pipeline import write_gold
 from retail_lakehouse.silver.schemas import SILVER_TABLES
 
@@ -42,11 +49,24 @@ silver = {
 gold = build_gold(
     silver, calendar_start=settings.calendar_start, calendar_end=settings.calendar_end
 )
+r3 = inventory_reconciliation(  # R3: stock snapshot vs movement ledger, gated with the tables
+    spark.table(f"{settings.silver_namespace}.{SILVER_TABLES['inventory']}"),
+    silver["inventory_movements"],
+)
+OPS_NAMESPACE = load_ops_namespace(  # central operational record (docs/OBSERVABILITY.md §8)
+    REPO_ROOT / "shared" / "config" / "ops.toml", dbutils.widgets.get("environment")
+)
 write_gold(
     gold,
     settings.target,
-    run_id=f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}",
-    sink=DeltaObservabilitySink(spark, settings.target.namespace),  # pipeline_runs
+    run_id=new_run_id(datetime.now(UTC)),
+    sink=standard_sink(
+        spark,
+        layer_namespace=settings.target.namespace,
+        ops_namespace=OPS_NAMESPACE,
+        environment=dbutils.widgets.get("environment"),
+    ),  # pipeline_runs
+    inventory_reconciliation=r3,
 )
 
 # COMMAND ----------

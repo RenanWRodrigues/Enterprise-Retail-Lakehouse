@@ -7,8 +7,25 @@ requires-python = ">=3.12"
 # No runtime dependencies: on Databricks, Spark is provided by the runtime.
 dependencies = []
 
-# PEP 735 dependency groups. Install with: python -m pip install --group dev
-# (no build backend is declared yet because there is no package to build).
+# One installable distribution with the four runtime packages (docs/ADR/0005-installable-packages.md):
+# `pip install -e .` locally (make install), a wheel in a Volume on Databricks (`%pip install`).
+# lakehouse_testing stays out: test infrastructure, never imported by runtime code.
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "shared/src/lakehouse_common",
+    "projects/enterprise-retail-lakehouse/src/retail_lakehouse",
+    "projects/industrial-iot-lakehouse/src/iot_lakehouse",
+    "projects/brazilian-financial-lakehouse/src/financial_lakehouse",
+]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["shared/src", "projects/*/src", "pyproject.toml", "README.md"]
+
+# PEP 735 dependency groups (installed from the lock: requirements/dev.lock.txt).
 [dependency-groups]
 dev = [
     # Exact pins (CLAUDE.md reproducibility; tests/contract/test_pinned_dependencies.py): the
@@ -29,6 +46,9 @@ dev = [
     # Delta Lake for Bronze integration tests (4.0.x <-> Spark 4.0). Its JARs are fetched
     # into the Ivy cache on first use; Delta tests run on Linux (docker/tests.Dockerfile).
     "delta-spark==4.0.1",
+    # Lockfile tool (uv.lock -> requirements/dev.lock.txt; `make lock`, `make lock-check`): reads the
+    # PEP 735 groups natively and locks every platform at once. Installs still use pip.
+    "uv==0.13.0",
 ]
 
 # ---------------------------------------------------------------- pytest
@@ -122,7 +142,8 @@ select = [
 
 "**/notebooks/**/*.py" = [
     "F821",     # spark, dbutils and display are provided by the Databricks runtime
-    "E402",     # imports follow the sys.path cell until the package is installable
+    "E402",     # imports follow the %pip install and restartPython cells
+    "E501",     # a `# MAGIC %pip install <wheel>` line cannot carry a noqa (pip would read it)
 ]
 "**/synthetic/*.py" = [
     "S311",     # seeded, reproducible PRNG is the point of a synthetic data generator

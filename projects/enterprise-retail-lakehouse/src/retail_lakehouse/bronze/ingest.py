@@ -18,7 +18,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 from lakehouse_common.naming import validate_namespace
-from lakehouse_common.observability import Layer, ObservabilitySink, track_run
+from lakehouse_common.observability import Layer, ObservabilitySink, new_run_id, track_run
 from retail_lakehouse import PROJECT
 from retail_lakehouse.bronze.transformations import BATCH_ID_COLUMN, to_bronze
 from retail_lakehouse.ingestion.readers import read_source
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 PIPELINE_NAME: Final = "retail_bronze"
 BRONZE_TABLES: Final = {dataset: f"bronze_{dataset}" for dataset in RETAIL_SOURCE_CONTRACTS}
 APPEND_ONLY_PROPERTY: Final = "delta.appendOnly"
+CHANGE_FEED_PROPERTY: Final = "delta.enableChangeDataFeed"
 _BATCH_ID: Final = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -112,7 +113,11 @@ def ingest_dataset(  # noqa: PLR0913 - keyword-only after `dataset`
     if spark.catalog.tableExists(table):
         writer.append()
     else:  # atomic CTAS: a failed read leaves no table behind
-        writer.tableProperty(APPEND_ONLY_PROPERTY, "true").create()
+        # append-only + Change Data Feed: the Silver discovers new units from the commits
+        # (lakehouse_common.incremental, ADR 0004)
+        writer.tableProperty(APPEND_ONLY_PROPERTY, "true").tableProperty(
+            CHANGE_FEED_PROPERTY, "true"
+        ).create()
     rows = _rows_written(spark, table)
     logger.info("bronze %s: batch %s ingested, %d rows", table, batch_id, rows)
     return IngestionResult(dataset, table, batch_id, path, IngestionStatus.INGESTED, rows)
@@ -133,7 +138,7 @@ def ingest_all(  # noqa: PLR0913 - keyword-only after `spark`
     Each dataset is one ``pipeline_runs`` row (table = its Bronze table). A skipped batch is a
     zero-records run; a failing dataset is recorded as FAILED and stops the run.
     """
-    run_id = f"{ingestion_timestamp:%Y%m%dT%H%M%SZ}"
+    run_id = new_run_id(ingestion_timestamp)
     results: list[IngestionResult] = []
     for dataset in datasets or list(RETAIL_SOURCE_CONTRACTS):
         with track_run(

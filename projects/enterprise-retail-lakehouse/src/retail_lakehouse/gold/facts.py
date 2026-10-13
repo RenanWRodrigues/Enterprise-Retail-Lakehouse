@@ -10,6 +10,7 @@ from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import DecimalType
 
+from retail_lakehouse.gold.dimensions import age_band_at
 from retail_lakehouse.gold.keys import (
     SECONDS_PER_DAY,
     UNKNOWN_KEY,
@@ -49,7 +50,24 @@ def _customer_version_at(events: DataFrame, at: str, dim_customer: DataFrame) ->
         & (F.col(at) < F.col("_valid_to")),
         "left",
     )
-    return matched.drop("_customer_id", "_valid_from", "_valid_to")
+    return _customer_identity(
+        matched.drop("_customer_id", "_valid_from", "_valid_to"), dim_customer
+    )
+
+
+def _customer_identity(events: DataFrame, dim_customer: DataFrame) -> DataFrame:
+    """Add ``customer_durable_key`` by ``customer_id`` (N:1: one durable key per customer).
+
+    Independent of the event time: an event before the customer's first version keeps the
+    customer (``customer_sk`` stays -1, since no attributes are known for that instant).
+    """
+    identities = (
+        dim_customer.where(F.col("customer_sk") != UNKNOWN_KEY)
+        .select(F.col("customer_id").alias("_identity_id"), "customer_durable_key")
+        .distinct()
+    )
+    matched = events.join(identities, F.col("customer_id") == F.col("_identity_id"), "left")
+    return matched.drop("_identity_id")
 
 
 def _lookup(
@@ -69,15 +87,30 @@ def _orders(orders: DataFrame) -> DataFrame:
     )
 
 
-def build_fact_sales(
+def _with_birth_date(events: DataFrame, birth_dates: DataFrame) -> DataFrame:
+    """Add ``birth_date`` by ``customer_id`` (N:1: one row per customer in ``birth_dates``)."""
+    births = birth_dates.select(F.col("customer_id").alias("_birth_customer_id"), "birth_date")
+    matched = events.join(births, F.col("customer_id") == F.col("_birth_customer_id"), "left")
+    return matched.drop("_birth_customer_id")
+
+
+def build_fact_sales(  # noqa: PLR0913 - the fact's inputs, keyword-only birth dates
     orders: DataFrame,
     order_items: DataFrame,
     dim_customer: DataFrame,
     dim_product: DataFrame,
     dim_store: DataFrame,
+    *,
+    birth_dates: DataFrame,
 ) -> DataFrame:
-    """Grain: one order line (order_id, line_number). No order-level values (freight, cash)."""
+    """Grain: one order line (order_id, line_number). No order-level values (freight, cash).
+
+    ``customer_age_band`` is derived: the customer's age band on the order's business date
+    (``birth_dates``: ``dimensions.customer_birth_dates``), unlike ``dim_customer.age_band``,
+    historized at the start of the version. The birth date itself is not kept.
+    """
     lines = order_items.join(_orders(orders), "order_id", "left")  # N:1
+    lines = _with_birth_date(lines, birth_dates)
     lines = _customer_version_at(lines, "order_timestamp", dim_customer)
     lines = _lookup(lines, dim_product, "product_id", ("product_sk", "supplier_sk"))
     lines = _lookup(lines, dim_store, "store_id", ("store_sk",))
@@ -88,6 +121,10 @@ def build_fact_sales(
         _date_key_or_unknown("order_timestamp", "date_key"),
         _event_date("order_timestamp", "order_date"),
         _key_or_unknown("customer_sk"),
+        _key_or_unknown("customer_durable_key"),
+        age_band_at(F.col("birth_date"), business_date(F.col("order_timestamp"))).alias(
+            "customer_age_band"
+        ),
         _key_or_unknown("product_sk"),
         _key_or_unknown("store_sk"),
         _key_or_unknown("supplier_sk"),
@@ -120,6 +157,7 @@ def build_fact_payments(
         _date_key_or_unknown("processed_at", "date_key"),
         _event_date("processed_at", "payment_date"),
         _key_or_unknown("customer_sk"),
+        _key_or_unknown("customer_durable_key"),
         _key_or_unknown("store_sk"),
         "payment_method",
         "payment_status",
@@ -148,6 +186,7 @@ def build_fact_shipments(
         _date_key_or_unknown("delivered_at", "delivery_date_key"),
         _event_date("delivered_at", "delivery_date"),
         _key_or_unknown("customer_sk"),
+        _key_or_unknown("customer_durable_key"),
         _key_or_unknown("store_sk"),
         "carrier_id",
         "shipment_status",

@@ -1,0 +1,14 @@
+# Central operational record: <ops_namespace>.pipeline_runs, written by the three projects
+# (lakehouse_common.observability.ops; docs/OBSERVABILITY.md §8). No secrets here.
+
+[local]
+ops_namespace = "ops"
+
+[smoke]
+# Isolated from [databricks]: smoke runs never write the real operational record.
+ops_namespace = "workspace.smoke_ops"
+
+[databricks]
+# One schema for the three projects. "workspace" is the Free Edition default catalog; confirm it
+# (and the permission to create a schema there) with shared/notebooks/00_preflight.py.
+ops_namespace = "workspace.ops"

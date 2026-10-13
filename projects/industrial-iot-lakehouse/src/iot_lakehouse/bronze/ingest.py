@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 INGESTED, QUARANTINED = "ingested", "quarantined"
 FILES_TABLE: Final = "bronze_files"
 APPEND_ONLY_PROPERTY: Final = "delta.appendOnly"
+CHANGE_FEED_PROPERTY: Final = "delta.enableChangeDataFeed"
 METADATA_FIELDS: Final = (
     StructField("_ingestion_timestamp", TimestampType(), False),
     StructField(SOURCE_FILE, StringType(), False),
@@ -220,7 +221,11 @@ def _append(frame: DataFrame, table: str) -> int:
     if spark.catalog.tableExists(table):
         writer.append()
     else:
-        writer.tableProperty(APPEND_ONLY_PROPERTY, "true").create()
+        # append-only + Change Data Feed: the Silver discovers new units from the commits
+        # (lakehouse_common.incremental, ADR 0004)
+        writer.tableProperty(APPEND_ONLY_PROPERTY, "true").tableProperty(
+            CHANGE_FEED_PROPERTY, "true"
+        ).create()
     latest = spark.sql(f"DESCRIBE HISTORY {table} LIMIT 1").select("operationMetrics").first()
     return int(((latest["operationMetrics"] if latest else None) or {}).get("numOutputRows", 0))
 

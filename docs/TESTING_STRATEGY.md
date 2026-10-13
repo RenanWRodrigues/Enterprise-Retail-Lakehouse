@@ -243,7 +243,7 @@ Instalação dos hooks (uma vez, com o `.venv` ativo):
 Com GNU make (`make help` lista; `COV=1` grava `.coverage.<suíte>` em qualquer alvo de teste):
 
 ```bash
-make install            # .venv + dependências de desenvolvimento
+make install            # .venv + dependências de desenvolvimento, do lock (requirements/dev.lock.txt)
 make lint               # ruff check, ruff format --check, mypy strict
 make test               # todos os testes, exceto integration (o que a cadeia da CI roda)
 make test-unit          # Python puro, sem Spark, sem rede
@@ -269,3 +269,22 @@ Sem make, os comandos equivalentes:
 .venv/Scripts/python -m mypy
 .venv/Scripts/python -m pre_commit run --all-files   # tudo o que o commit/CI checa
 ```
+
+### Dependências travadas (lock)
+
+| Arquivo | Papel |
+|---|---|
+| `pyproject.toml` `[dependency-groups] dev` | intenção: pins exatos das dependências **diretas** |
+| `uv.lock` | resolução completa (transitivas incluídas), válida para Linux, Windows e macOS, Python ≥ 3.12 |
+| `requirements/dev.lock.txt` | exportado do `uv.lock`, com hashes: o que `make install` e a CI instalam (`pip --require-hashes`) |
+
+- **Instalar:** `make install` (só pip; o uv não é necessário).
+- **Mudar uma dependência:** edite o pin no `pyproject.toml` e rode `make lock`. O `uv lock` mantém
+  as versões já travadas e só resolve o que mudou.
+- **Atualizar uma transitiva de propósito:** `.venv/Scripts/python -m uv lock -P nome==versão`,
+  depois `make lock`. Nunca use `uv lock --upgrade` sem rodar a suíte.
+- **CI:** o job de lint roda `make lock-check`. Ele falha se o `pyproject`, o `uv.lock` e o lock
+  exportado discordarem. `tests/contract/test_lockfile.py` faz as mesmas comparações sem o uv, e
+  confere também os hashes e a ausência de caminhos locais e credenciais.
+- **Databricks:** fora do lock. `[project].dependencies` é vazio, e o PySpark e o Delta vêm do
+  runtime (`docs/databricks/compatibility.md` §5).

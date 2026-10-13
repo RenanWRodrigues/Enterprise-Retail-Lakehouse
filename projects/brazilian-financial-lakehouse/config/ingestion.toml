@@ -9,6 +9,7 @@ lookback_days = 90
 lookback_periods = 6
 timeout_seconds = 30.0
 max_attempts = 5
+max_response_bytes = 33554432   # 32 MiB, received or decoded body
 
 [databricks]
 # Outbound internet access from Free Edition is not confirmed (docs/data_sources.md §3).
@@ -19,6 +20,7 @@ lookback_days = 90
 lookback_periods = 6
 timeout_seconds = 30.0
 max_attempts = 5
+max_response_bytes = 33554432   # 32 MiB, received or decoded body
 
 [smoke]
 # Databricks smoke test: isolated from [databricks]; a short history keeps the API calls few
@@ -30,3 +32,4 @@ lookback_days = 30
 lookback_periods = 2
 timeout_seconds = 30.0
 max_attempts = 3
+max_response_bytes = 33554432   # 32 MiB, received or decoded body

@@ -16,8 +16,24 @@ def _spark(version: str = "4.0.0") -> Any:
 
 
 def test_the_runtime_passes_from_python_3_12() -> None:
-    assert check_runtime(_spark(), (3, 12)) == PreflightResult(
-        "runtime", True, "Python 3.12; Spark 4.0.0"
+    result = check_runtime(_spark(), (3, 12), client_version="4.0.4", environment={})
+
+    assert result == PreflightResult(
+        "runtime", True, "Python 3.12; Spark 4.0.0 (server); PySpark 4.0.4 (client); runtime: local"
+    )
+
+
+def test_the_runtime_tells_server_client_and_databricks_versions_apart() -> None:
+    """Serverless is Spark Connect: ``spark.version`` is the server, ``pyspark`` the client."""
+    result = check_runtime(
+        _spark("4.0.0"),
+        (3, 12),
+        client_version="4.0.1",
+        environment={"DATABRICKS_RUNTIME_VERSION": "client.4.9"},
+    )
+
+    assert result.detail == (
+        "Python 3.12; Spark 4.0.0 (server); PySpark 4.0.1 (client); runtime: client.4.9"
     )
 
 

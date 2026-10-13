@@ -100,10 +100,13 @@ Silver não guarda (por exemplo, o e-mail) colapsam e contam como duplicata.
 
 ### 6. Chaves estrangeiras
 
-Uma referência inexistente (cliente, produto ou pedido) **não** é defeito de linha. A linha fica
+Relações checadas (`REFERENCES`): pedido → cliente; item → produto e pedido; pagamento → pedido;
+remessa → pedido; movimento de estoque → produto e loja (`reference_id` é opcional e não é FK).
+Uma referência inexistente (cliente, produto, loja ou pedido) **não** é defeito de linha. A linha fica
 na Silver e o gate registra `unknown_<ref>` como WARNING (ADR 007: dado mestre pode chegar
 atrasado); a Gold a liga ao membro desconhecido. Acima de 5% das linhas,
-`unknown_<ref>_systemic` é CRITICAL: a carga do mestre provavelmente falhou.
+`unknown_<ref>_systemic` é CRITICAL: a carga do mestre provavelmente falhou. Os dois checks levam
+em `details` até 5 chaves órfãs (`examples: …`), e `failed_rows` tem a contagem completa.
 
 ## Versões de cliente (entrada da SCD Type 2)
 
@@ -122,9 +125,10 @@ Gold compacta as versões pelos atributos rastreados (`segment`, `city`, `state`
 | Mecanismo | Garantia |
 |---|---|
 | Tabela de controle `silver_processed_batches` (entidade, lote) | só lotes pendentes são lidos; o lote é marcado **depois** das gravações |
+| Descoberta incremental (ADR 0004): `_batch_id` do Change Data Feed dos commits do Bronze após `silver_discovery_checkpoints` | a descoberta custa os commits novos, não a tabela; checkpoint gravado depois de todos os lotes da entidade; CDF ausente ou histórico indisponível → varredura completa com motivo; `rediscover` e `reprocess` em `run_silver` |
 | Clientes: MERGE insert-only em (`customer_id`, `effective_from`) | versão nova entra uma vez |
 | Demais: MERGE por chave de negócio | lote mais novo com conteúdo diferente atualiza (SCD1); conteúdo igual não muda nada |
-| Quarentena: insert-only por (impressão digital da linha, motivos); impressão = SHA-256 dos valores entregues e do lote, NULL com marcador próprio (`standardize.fingerprint`) | reprocessar o lote não duplica; linhas que diferem só na posição de um NULL não colapsam |
+| Quarentena: insert-only por (impressão digital da linha, motivos); impressão = SHA-256 dos valores entregues e do lote, NULL com marcador próprio (`lakehouse_common.fingerprint`, decisão 088) | reprocessar o lote não duplica; linhas que diferem só na posição de um NULL não colapsam |
 | `BatchCounts.reconcile()` | `linhas do Bronze = válidas + quarentena + duplicatas`, cada parcela contada do seu próprio DataFrame; divergência é CRITICAL e para antes de gravar |
 
 Um lote interrompido antes de ser marcado é processado de novo; os MERGEs ignoram o que já têm.
@@ -146,6 +150,15 @@ As referências são checadas contra a Silver atual.
 - Uma linha de `pipeline_runs` por entidade (`retail_silver`): `input` = linhas do Bronze,
   `output` = linhas válidas, `rejected` = quarentena, `duplicate` = duplicatas. Os resultados vão
   para `data_quality_results`.
+- **Contagens = lotes confirmados** (`process_pending`, `EntityProgress`). Um lote é confirmado
+  quando os MERGEs terminaram e ele foi marcado em `silver_processed_batches`; só então suas
+  contagens entram na execução, atualizadas a cada lote. Execução `FAILED`: contagens dos lotes
+  confirmados (zero, se nenhum) e `error_message` terminando em
+  `silver <entidade>: failed at <etapa> of batch <lote>; confirmed batches: <lotes>`. Etapas:
+  `pending_batches`, `standardize`, `quality_gate`, `merge`, `mark_processed`. O lote que falhou
+  não é contado: é reprocessado na próxima execução e contado nela, uma vez. Cada execução é
+  uma linha nova (`pipeline_runs` é append-only); somar as execuções não conta um lote duas
+  vezes.
 - Sem cache: o serverless rejeita as APIs de cache (ADR 0001). Os lotes são pequenos.
 
 ## Como executar

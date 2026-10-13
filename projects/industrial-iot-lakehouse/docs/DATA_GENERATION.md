@@ -86,6 +86,10 @@ docker run --rm -v "${PWD}:/workspace" lakehouse-tests \
   sh -c "PYTHONPATH=projects/industrial-iot-lakehouse/src:shared/src python -m iot_lakehouse.synthetic --output data/landing/iot"
 ```
 
+Códigos de saída da CLI: `0` gravado; `1` falha de escrita de arquivo (`OSError`, registrada no
+log); `2` erro de uso ou de configuração, detectado antes de iniciar o Spark. Erros do próprio
+Spark ao gravar continuam com traceback.
+
 Databricks: `notebooks/setup/00_generate_synthetic_sources.py` (widget `output` = Volume).
 Volume padrão (`config/data_generation.toml`): 120 equipamentos, 750 sensores, 30 dias a 1 min
 ≈ 32,4 milhões de leituras (antes de lacunas offline e duplicatas).

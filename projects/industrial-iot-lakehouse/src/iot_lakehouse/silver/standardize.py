@@ -23,6 +23,7 @@ from pyspark.sql.types import ArrayType, StringType, TimestampType
 
 from iot_lakehouse.quality.suites import reading_row_rules
 from iot_lakehouse.silver.units import is_convertible, normalized_unit, to_canonical
+from lakehouse_common.fingerprint import fingerprint
 from lakehouse_common.quality import (
     CustomCondition,
     NotNull,
@@ -42,7 +43,6 @@ LINEAGE: Final = ("_file_id", "_source_file", "_batch_id")
 _SRC: Final = "_src_"
 _ARRIVAL: Final = "_arrival"
 MEASUREMENT_COLUMNS: Final = ("reading_id", "sensor_id", "event_timestamp", "reading_value", "unit")
-_SEPARATOR, _NULL = "\u001f", "\u0000"  # unit separator; a NULL marker distinct from ""
 ERROR = Severity.ERROR
 
 
@@ -53,8 +53,7 @@ def _blank_to_null(column: Column) -> Column:
 
 def _content_hash(text: dict[str, Column]) -> Column:
     """SHA-256 of the measurement as delivered (not of the arrival time): resend identity."""
-    parts = [F.coalesce(text[c], F.lit(_NULL)) for c in MEASUREMENT_COLUMNS]
-    return F.sha2(F.concat_ws(_SEPARATOR, *parts), 256)
+    return fingerprint(*(text[c] for c in MEASUREMENT_COLUMNS))  # shared: decision 088
 
 
 def normalize(bronze: DataFrame) -> DataFrame:

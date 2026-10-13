@@ -22,7 +22,7 @@ from iot_lakehouse.silver.cmms import CMMS_DATASETS, silver_cmms_table
 from iot_lakehouse.silver.pipeline import SilverTarget
 from lakehouse_common.config import load_environment
 from lakehouse_common.naming import validate_namespace
-from lakehouse_common.observability import Layer, ObservabilitySink, track_run
+from lakehouse_common.observability import Layer, ObservabilitySink, new_run_id, track_run
 from lakehouse_common.quality import run_suite
 
 PIPELINE_NAME: Final = "iot_gold"
@@ -71,7 +71,7 @@ def run_gold(
     at = utc(now)
     with track_run(
         pipeline_name=PIPELINE_NAME,
-        run_id=f"{at:%Y%m%dT%H%M%SZ}",
+        run_id=new_run_id(at),
         project=PROJECT,
         layer=Layer.GOLD,
         table=f"{settings.gold_namespace}.*",

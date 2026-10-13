@@ -11,6 +11,7 @@ JSON Lines, Delta) stores that same row. Starting a step never starts Spark.
 import logging
 import re
 import time
+import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -28,6 +29,8 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from lakehouse_common.logging.redaction import mask_secrets
+from lakehouse_common.logging.structured import log_context
 from lakehouse_common.quality import (
     CheckResult,
     CriticalQualityError,
@@ -41,14 +44,31 @@ from lakehouse_common.quality import (
 logger = logging.getLogger(__name__)
 alert_logger = logging.getLogger("lakehouse.alerts")  # route this logger to the alert channel
 MAX_ERROR_LENGTH: Final = 2000
-_SENSITIVE_KEY = r"[A-Za-z0-9_-]*(?:password|passwd|pwd|token|secret|api[_-]?key)[A-Za-z0-9_-]*"
-# (pattern, replacement): assignments and query parameters (``access_token=...&page=2`` keeps
-# ``&page=2``), authorization headers, and the password of ``scheme://user:password@host`` URLs.
-_SECRETS: Final = (
-    (re.compile(rf"(?i)\b({_SENSITIVE_KEY})(\s*[=:]\s*)[^\s&;,'\"]+"), r"\1\2***"),
-    (re.compile(r"(?i)\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]+"), r"\1\2***"),
-    (re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://[^/\s:@]+:)[^/\s@]+(@)"), r"\1***\2"),
-)
+RUN_ID_PATTERN: Final = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{32}$")
+_STARTED_LABEL: Final = re.compile(r"^\d{8}T\d{6}Z")
+
+
+def _uuid_hex() -> str:
+    return uuid.uuid4().hex
+
+
+def new_run_id(started: datetime, *, token: Callable[[], str] = _uuid_hex) -> str:
+    """``<UTC start, to the second>Z-<uuid4 hex>``: one id per run, generated once and passed on.
+
+    Uniqueness comes from the 122 random bits, never from the clock (two runs started in the
+    same second, or on two machines, differ). The prefix keeps the id readable and sortable by
+    start second; the exact start stays in ``pipeline_runs.started_at``. ``token`` is injectable
+    for deterministic tests. Raises ``ValueError`` for a naive ``started``.
+    """
+    if started.tzinfo is None:
+        raise ValueError("started must be timezone-aware (use UTC)")
+    return f"{started.astimezone(UTC):%Y%m%dT%H%M%SZ}-{token()}"
+
+
+def run_started_label(run_id: str) -> str | None:
+    """The readable start (``yyyymmddThhmmssZ``) of a run id, new or legacy (seconds only)."""
+    match = _STARTED_LABEL.match(run_id)
+    return match.group(0) if match else None
 
 
 class Layer(StrEnum):
@@ -80,6 +100,7 @@ class PipelineRun:
     duplicate_rows: int | None = None
     status: RunStatus | None = None
     error_message: str | None = None
+    error_type: str | None = None  # exception class of a FAILED run (not in PIPELINE_RUNS_SCHEMA)
     quality: list[CheckResult] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
 
@@ -156,11 +177,16 @@ class ObservabilitySink(Protocol):
 
 
 def safe_error_message(error: BaseException) -> str:
-    """``Type: message``, secrets-looking values masked, bounded length."""
-    text = f"{type(error).__name__}: {error}"
-    for pattern, replacement in _SECRETS:
-        text = pattern.sub(replacement, text)
-    return text[:MAX_ERROR_LENGTH]
+    """``Type: message | note | ...``, secrets-looking values masked, bounded length.
+
+    Notes (PEP 678, ``error.add_note``) carry the pipeline's context, e.g. the stage that
+    failed and the progress already confirmed. They are kept at the end: when the text is too
+    long, the message is cut, not the notes.
+    """
+    message = mask_secrets(f"{type(error).__name__}: {error}")
+    notes = "".join(f" | {note}" for note in getattr(error, "__notes__", ()))
+    notes = mask_secrets(notes)[:MAX_ERROR_LENGTH]
+    return message[: MAX_ERROR_LENGTH - len(notes)] + notes
 
 
 class RunTracker:
@@ -240,33 +266,47 @@ def track_run(  # noqa: PLR0913 - keyword-only, injectable clocks for tests
     run = PipelineRun(pipeline_name, run_id, project, layer, table, clock())
     tracker = RunTracker(run, alert)
     started = monotonic()
-    try:
-        yield tracker
-    except BaseException as error:
-        run.status = RunStatus.FAILED
-        run.error_message = safe_error_message(error)
-        raise
-    else:
-        run.status = RunStatus.SUCCEEDED_WITH_ALERTS if run.alerts else RunStatus.SUCCEEDED
-    finally:
-        run.finished_at = clock()
-        run.duration_seconds = round(monotonic() - started, 6)
-        logger.info(
-            "run %s %s/%s: %s in %.3fs (in=%s out=%s rejected=%s duplicates=%s)",
-            run.run_id,
-            run.pipeline_name,
-            run.table,
-            run.status,
-            run.duration_seconds,
-            run.input_rows,
-            run.output_rows,
-            run.rejected_rows,
-            run.duplicate_rows,
-        )
-        if run.status is RunStatus.FAILED:
-            try:
-                sink.write(run)
-            except Exception:  # the step's own error must stay the one that propagates
-                logger.exception("could not persist the failed run %s", run.run_id)
+    with log_context(project=project, pipeline=pipeline_name, run_id=run_id):
+        try:
+            yield tracker
+        except BaseException as error:
+            run.status = RunStatus.FAILED
+            run.error_message = safe_error_message(error)
+            run.error_type = type(error).__name__
+            raise
         else:
-            sink.write(run)
+            run.status = RunStatus.SUCCEEDED_WITH_ALERTS if run.alerts else RunStatus.SUCCEEDED
+        finally:
+            run.finished_at = clock()
+            run.duration_seconds = round(monotonic() - started, 6)
+            _log_summary(run)
+            if run.status is RunStatus.FAILED:
+                try:
+                    sink.write(run)
+                except Exception:  # the step's own error must stay the one that propagates
+                    logger.exception("could not persist the failed run %s", run.run_id)
+            else:
+                sink.write(run)
+
+
+def _log_summary(run: PipelineRun) -> None:
+    """The run's closing line: same text as before, plus structured fields; ERROR if FAILED."""
+    failed = run.status is RunStatus.FAILED
+    logger.log(
+        logging.ERROR if failed else logging.INFO,
+        "run %s %s/%s: %s in %.3fs (in=%s out=%s rejected=%s duplicates=%s)",
+        run.run_id,
+        run.pipeline_name,
+        run.table,
+        run.status,
+        run.duration_seconds,
+        run.input_rows,
+        run.output_rows,
+        run.rejected_rows,
+        run.duplicate_rows,
+        extra={
+            "status": run.status.value if run.status else None,
+            "duration_ms": round((run.duration_seconds or 0.0) * 1000, 3),
+            "error_type": run.error_type,
+        },
+    )

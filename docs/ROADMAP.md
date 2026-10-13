@@ -19,9 +19,9 @@ Nenhuma fase começa antes de a anterior cumprir a *Definition of Done*.
 - ✅ Infraestrutura de testes: `pyspark==4.0.4` (dev), fixture `spark` no `conftest.py` da raiz,
   `lakehouse_testing`, markers automáticos, coverage. Re-fixar a versão do PySpark após
   verificar o runtime.
-- Build backend (pacotes instaláveis, mesmos imports).
+- ✅ Build backend (pacotes instaláveis, mesmos imports; ADR 0005, 2026-10-13).
 - `delta-spark` junto com o primeiro teste `integration`.
-- Decidir como notebooks importam os pacotes no Databricks.
+- ✅ Notebooks importam o pacote instalado (`%pip` do wheel num Volume; ADR 0005). Execução no workspace pendente.
 - **Fora de escopo**: módulos em `lakehouse_common` (ver regra de admissão em `shared/README.md`).
 
 ## Fase 2 — Enterprise Retail Lakehouse (`projects/enterprise-retail-lakehouse`)

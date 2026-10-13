@@ -18,7 +18,11 @@ PYTHONPATH="projects/enterprise-retail-lakehouse/src;shared/src" \
 ... -m retail_lakehouse.synthetic --output <dir>   --plan projects/enterprise-retail-lakehouse/config/incremental.toml --batch batch_002
 ```
 
-`PYTHONPATH` é necessário até os pacotes serem instaláveis (build backend, Fase 1).
+Os pacotes vêm da instalação editável (`make install`; ADR 0005), sem `PYTHONPATH`.
+Códigos de saída: `0` gravado; `1` falha de escrita (registrada no log, sem traceback; arquivos
+já gravados ficam: regere num diretório vazio); `2` erro de uso ou de configuração (arquivo
+ausente, TOML inválido, valor fora do intervalo, `--plan` sem `--batch`, lote desconhecido),
+detectado antes de qualquer gravação.
 No Databricks, `--output` aponta para um Volume (`/Volumes/<catalog>/<schema>/<volume>/landing`).
 
 API Python:

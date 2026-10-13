@@ -15,6 +15,7 @@ UNKNOWN_DATE_LABEL: Final = "UNKNOWN_DATE"  # year_month of date_key = -1: never
 FAR_FUTURE: Final = datetime(9999, 12, 31, tzinfo=UTC)
 FAR_PAST: Final = datetime(1900, 1, 1, tzinfo=UTC)
 CUSTOMER_TRACKED_ATTRIBUTES: Final = ("segment", "city", "state", "region")  # SCD Type 2
+CUSTOMER_IDENTITY: Final = "customer_identity"  # hash scope of customer_durable_key
 MONTH_NAMES: Final = (
     "janeiro", "fevereiro", "março", "abril", "maio", "junho",
     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
@@ -27,7 +28,6 @@ ADULT_AGE: Final = 18
 AGE_BANDS: Final = ((25, "18-24"), (35, "25-34"), (45, "35-44"), (55, "45-54"), (65, "55-64"))
 OLDEST_BAND: Final = "65+"
 UNKNOWN_AGE_BAND: Final = "unknown"
-MONTHS_PER_YEAR: Final = 12
 NOVEMBER, FRIDAY, SATURDAY = 11, 5, 6
 BLACK_FRIDAY_DAYS: Final = (23, 29)  # the Friday after the 4th Thursday falls in this range
 
@@ -79,12 +79,44 @@ def build_dim_date(spark: SparkSession, start: date, end: date) -> DataFrame:
     return with_unknown_member(dim, {"date_key": UNKNOWN_KEY, "year_month": UNKNOWN_DATE_LABEL})
 
 
-def _age_band(birth_date: Column, at: Column) -> Column:
-    age = F.floor(F.months_between(at, birth_date) / MONTHS_PER_YEAR)
-    band = F.when(birth_date.isNull() | (age < ADULT_AGE), F.lit(UNKNOWN_AGE_BAND))
+def age_in_years(birth_date: Column, on: Column) -> Column:
+    """Completed years on the date ``on``: this year's birthday counts only once reached.
+
+    Calendar rule (year, then month and day), so a birthday on ``on`` counts. A 29 February
+    birthday is reached on 1 March in common years. NULL when either date is NULL: an unknown
+    birth date never becomes an age.
+    """
+    birthday_ahead = (F.month(on) < F.month(birth_date)) | (
+        (F.month(on) == F.month(birth_date)) & (F.dayofmonth(on) < F.dayofmonth(birth_date))
+    )
+    years = F.year(on) - F.year(birth_date) - F.when(birthday_ahead, 1).otherwise(0)
+    return years.cast("int")
+
+
+def age_band_at(birth_date: Column, on: Column) -> Column:
+    """The age band on the date ``on`` (one rule for the historized and the per-event band).
+
+    ``unknown`` without a birth date or under 18 (invalid data for a customer).
+    """
+    age = age_in_years(birth_date, on)
+    band = F.when(age.isNull() | (age < ADULT_AGE), F.lit(UNKNOWN_AGE_BAND))
     for upper, label in AGE_BANDS:
         band = band.when(age < upper, F.lit(label))
     return band.otherwise(F.lit(OLDEST_BAND))
+
+
+def customer_birth_dates(customers: DataFrame) -> DataFrame:
+    """One ``(customer_id, birth_date)`` per customer from the Silver versions: the birth date of
+    the latest version that has one. A birth date is a fact about the person, not about a
+    version: a correction applies to every event. The Gold never stores it (PII); facts use it
+    only to derive the band at the event."""
+    latest_first = Window.partitionBy("customer_id").orderBy(F.col("effective_from").desc())
+    known = customers.where(F.col("birth_date").isNotNull())
+    return (
+        known.withColumn("_rank", F.row_number().over(latest_first))
+        .where(F.col("_rank") == 1)
+        .select("customer_id", "birth_date")
+    )
 
 
 def build_dim_customer(customers: DataFrame) -> DataFrame:
@@ -92,6 +124,8 @@ def build_dim_customer(customers: DataFrame) -> DataFrame:
 
     A new version opens only when a tracked attribute changes; ``valid_to`` is the next
     version's ``valid_from`` (half-open interval) or 9999-12-31 for the current one.
+    ``customer_durable_key`` (hash of ``customer_id`` only) is the same on every version: facts
+    keep the customer through it even when no version is valid at the event (ADR 0003).
     """
     by_time = Window.partitionBy("customer_id").orderBy("effective_from")
     is_first = F.lag("effective_from").over(by_time).isNull()
@@ -108,9 +142,10 @@ def build_dim_customer(customers: DataFrame) -> DataFrame:
         surrogate_key("customer", F.col("customer_id"), F.col("effective_from")).alias(
             "customer_sk"
         ),
+        surrogate_key(CUSTOMER_IDENTITY, F.col("customer_id")).alias("customer_durable_key"),
         "customer_id",
         *CUSTOMER_TRACKED_ATTRIBUTES,
-        _age_band(F.col("birth_date"), business_date(F.col("effective_from"))).alias("age_band"),
+        age_band_at(F.col("birth_date"), business_date(F.col("effective_from"))).alias("age_band"),
         business_date(F.col("registered_at")).alias("registered_date"),
         F.col("effective_from").alias("valid_from"),
         F.coalesce(next_start, F.lit(FAR_FUTURE)).alias("valid_to"),
@@ -120,6 +155,7 @@ def build_dim_customer(customers: DataFrame) -> DataFrame:
         dim,
         {
             "customer_sk": UNKNOWN_KEY,
+            "customer_durable_key": UNKNOWN_KEY,
             "customer_id": None,
             "age_band": UNKNOWN_AGE_BAND,
             "valid_from": FAR_PAST,

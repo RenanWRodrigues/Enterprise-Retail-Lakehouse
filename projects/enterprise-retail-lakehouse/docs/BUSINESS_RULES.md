@@ -36,6 +36,9 @@ Regras de cálculo:
   partir dos componentes em cada recorte — nunca média de médias.
 - Quebras por atributos de cliente usam `customer_sk` (versão vigente no pedido), nunca
   `customer_id`: juntar por `customer_id` multiplicaria linhas de clientes com várias versões SCD2.
+- Identidade do cliente (clientes distintos, histórico por cliente) usa `customer_durable_key`:
+  inclui eventos anteriores ao cadastro, que não têm versão (`customer_sk = -1`). Para os
+  atributos atuais, juntar com `dim_customer` por `customer_durable_key` e `is_current`.
 - Fatos de grains diferentes só se combinam **depois** de agregados ao mesmo grain (ex.: pedido).
 
 ## 3. Reconciliações (executadas como testes)
@@ -62,14 +65,18 @@ Consolidado:
 
 ### R3 — Estoque
 
-- Para cada (loja, produto): Σ `fact_inventory_movements.quantity` = `inventory.quantity_on_hand`
-  da foto em `end_date` (saldo é semi-aditivo: soma no tempo é proibida, soma de movimentos é a regra).
+- Para cada foto (`snapshot_date`) e cada (loja, produto): `inventory.quantity_on_hand` = Σ
+  `quantity` dos movimentos com data de negócio (Brasília) ≤ `snapshot_date`; ausente de um lado
+  conta como 0; tolerância 0 unidade (saldo é semi-aditivo: soma no tempo é proibida, soma de
+  movimentos é a regra). **Gate da Gold**: divergência = ERROR, > 5% das chaves = CRITICAL (não
+  publica). Regra exata e justificativa: `docs/audits/inventory-quality-r3.md`.
 - −Σ `quantity` dos movimentos `sale` = Σ `fact_sales.quantity` dos pedidos não cancelados.
 
 ## 4. Classificações
 
 | Atributo | Regra |
 |---|---|
-| `age_band` (`dim_customer`) | idade em `valid_from`: `18-24`, `25-34`, `35-44`, `45-54`, `55-64`, `65+`; `unknown` sem data de nascimento ou com idade < 18 (dado inválido) |
+| `age_band` (`dim_customer`, historizada) | idade em `valid_from`: `18-24`, `25-34`, `35-44`, `45-54`, `55-64`, `65+`; `unknown` sem data de nascimento ou com idade < 18 (dado inválido) |
+| `customer_age_band` (`fact_sales`, derivada) | mesmas faixas, com a idade na data de negócio do pedido; **é a que a análise de vendas por idade usa**. Idade = anos completos pelo calendário; quem nasceu em 29/02 faz aniversário em 1º/03 nos anos comuns |
 | `is_black_friday` (`dim_date`) | sexta-feira após a 4ª quinta-feira de novembro |
 | `is_weekend` (`dim_date`) | sábado ou domingo |

@@ -15,11 +15,11 @@ dbutils.widgets.text("volume", "probe")
 
 # COMMAND ----------
 
-import sys
-from pathlib import Path
+# MAGIC %pip install --quiet --no-deps /Volumes/workspace/libs/wheels/databricks_lakehouse_portfolio-0.1.0-py3-none-any.whl
 
-REPO_ROOT = Path.cwd().parents[1]  # shared/notebooks -> repository root
-sys.path[:0] = [str(REPO_ROOT / "shared" / "src")]
+# COMMAND ----------
+
+dbutils.library.restartPython()  # the installed packages are importable from here on
 
 # COMMAND ----------
 

@@ -268,3 +268,31 @@ def test_masking_keeps_the_useful_part_of_the_message() -> None:
 
 def test_error_messages_are_bounded() -> None:
     assert len(safe_error_message(RuntimeError("x" * 10_000))) == 2000
+
+
+def _noted(message: str, *notes: str) -> RuntimeError:
+    error = RuntimeError(message)
+    for note in notes:
+        error.add_note(note)
+    return error
+
+
+def test_error_messages_keep_the_exception_notes() -> None:
+    """Pipelines add the failed stage and the confirmed progress as notes (PEP 678)."""
+    text = safe_error_message(_noted("boom", "stage=merge batch=b2", "confirmed batches: b1"))
+
+    assert text == "RuntimeError: boom | stage=merge batch=b2 | confirmed batches: b1"
+
+
+def test_notes_survive_the_length_bound() -> None:
+    text = safe_error_message(_noted("x" * 10_000, "stage=merge batch=b2"))
+
+    assert len(text) == 2000
+    assert text.endswith(" | stage=merge batch=b2")
+
+
+def test_notes_are_masked_too() -> None:
+    text = safe_error_message(_noted("boom", f"retry with token={FAKE}"))
+
+    assert FAKE not in text
+    assert text.endswith("token=***")

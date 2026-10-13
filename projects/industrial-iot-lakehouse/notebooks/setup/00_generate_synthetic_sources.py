@@ -12,13 +12,17 @@ dbutils.widgets.text("output", "/Volumes/iot/landing/files")
 
 # COMMAND ----------
 
-# Until the package is installable (Phase 1), import it from the repository (Git folder).
-import sys
+# MAGIC %pip install --quiet --no-deps /Volumes/workspace/libs/wheels/databricks_lakehouse_portfolio-0.1.0-py3-none-any.whl
+
+# COMMAND ----------
+
+dbutils.library.restartPython()  # the installed packages are importable from here on
+
+# COMMAND ----------
+
 from pathlib import Path
 
-PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/setup -> project root
-REPO_ROOT = PROJECT_ROOT.parents[1]
-sys.path[:0] = [str(PROJECT_ROOT / "src"), str(REPO_ROOT / "shared" / "src")]
+PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/setup -> project root (config files)
 
 # COMMAND ----------
 

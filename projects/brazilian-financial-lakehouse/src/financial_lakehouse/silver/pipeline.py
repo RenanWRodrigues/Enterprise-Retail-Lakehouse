@@ -81,6 +81,7 @@ from lakehouse_common.observability import (
     ObservabilitySink,
     RunStatus,
     RunTracker,
+    new_run_id,
     track_run,
 )
 from lakehouse_common.observability.runs import alert_logger
@@ -308,7 +309,7 @@ def _consume(
         duplicate_rows=batch.counts[DUPLICATE],
     )
     balance = reconcile_silver(batch.consumed.rows, batch.counts)
-    run_id = run_id_of(started)
+    run_id = step.run.run_id  # the observed run's id: reconciliation and checkpoint share it
     record = ReconciliationRecord(run_id, started, batch.consumed, balance)
     write_reconciliation(spark, tables.reconciliation, record)  # kept even if the gate fails
     step.record_quality(_gate(spark, tables, batch, started))  # CRITICAL raises: nothing written
@@ -321,11 +322,6 @@ def _consume(
         Checkpoint(PIPELINE_NAME, tables.bronze, commits.end, run_id, started),
     )
     return batch.counts
-
-
-def run_id_of(started: datetime) -> str:
-    """The run id: the UTC start, to the second (one run per pipeline at a time)."""
-    return f"{started:%Y%m%dT%H%M%SZ}"
 
 
 def _plan(spark: SparkSession, tables: SilverTables) -> CommitRange:
@@ -350,7 +346,7 @@ def run_silver(
     cannot be read; the message carries the recovery procedure).
     """
     started = (now or datetime.now(UTC)).astimezone(UTC)
-    run_id = run_id_of(started)
+    run_id = new_run_id(started)
     tables = SilverTables.of(bronze_table, namespace)
     observer = sink or DeltaObservabilitySink(spark, namespace)
     counts = dict.fromkeys(DESTINATIONS, 0)

@@ -85,6 +85,13 @@ class RowCheck(QualityCheck, ABC):
     def annotate(self, df: DataFrame, flag_column: str) -> DataFrame:
         """Return ``df`` plus ``flag_column`` (TRUE = row fails), same rows, same columns."""
 
+    def failure_examples(self, df: DataFrame) -> str | None:
+        """Diagnostic ``details`` for a check that failed rows (None: no examples).
+
+        Called by the runner only when ``failed_rows > 0``: it costs one extra Spark action.
+        """
+        return None
+
 
 class PredicateCheck(RowCheck, ABC):
     """A row check expressed as a single column expression."""
@@ -263,6 +270,8 @@ class ReferentialIntegrity(RowCheck):
 
     Reference keys are de-duplicated before the left join, so the join is N:1 and
     never multiplies rows. NULL foreign keys are ignored (see ``NotNull``).
+    ``examples > 0``: on failure, ``details`` lists up to that many distinct orphan keys in
+    ascending order (``examples: k1, k2``), for diagnosis. Off by default.
     """
 
     check_type: ClassVar[str] = "referential_integrity"
@@ -271,11 +280,29 @@ class ReferentialIntegrity(RowCheck):
     reference: DataFrame
     reference_column: str
     dimension: Dimension = field(default=Dimension.REFERENTIAL_INTEGRITY, kw_only=True)
+    examples: int = field(default=0, kw_only=True)
 
     def __post_init__(self) -> None:
         super().__post_init__()
         _require_column(self.column)
         _require_column(self.reference_column)
+        if self.examples < 0:
+            raise ValueError("examples must not be negative")
+
+    def failure_examples(self, df: DataFrame) -> str | None:
+        if not self.examples:
+            return None
+        flag, key = "_dq_example_flag", "_dq_example_key"
+        rows = (
+            self.annotate(df, flag)
+            .where(F.col(flag))
+            .select(F.col(self.column).cast("string").alias(key))
+            .distinct()
+            .orderBy(key)
+            .limit(self.examples)
+            .collect()  # at most `examples` keys reach the driver
+        )
+        return f"examples: {', '.join(row[key] for row in rows)}" if rows else None
 
     @property
     def column_name(self) -> str:

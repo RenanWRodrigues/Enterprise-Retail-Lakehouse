@@ -14,6 +14,7 @@
 | Databricks (notebooks/jobs) | Databricks Secrets: `dbutils.secrets.get(scope, key)` |
 | Máquina local | variáveis de ambiente ou `~/.databrickscfg` (fora do repositório) |
 | CI (futuro) | secrets do provedor de CI, nunca no YAML |
+| Webhook de alertas (opcional) | `LAKEHOUSE_ALERT_WEBHOOK_URL` no ambiente do job, preenchida a partir do Databricks Secrets; só `https`; nunca registrada em log (`lakehouse_common.logging.alerts`) |
 
 O valor de um secret é lido no ponto de uso e não é atribuído a variáveis globais,
 impresso ou passado para `display()`.

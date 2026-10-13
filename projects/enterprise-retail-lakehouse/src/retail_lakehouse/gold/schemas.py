@@ -49,6 +49,7 @@ GOLD_SCHEMAS: Final[dict[str, StructType]] = {
     ),
     "dim_customer": _schema(
         ("customer_sk", LONG),
+        ("customer_durable_key", LONG),
         ("customer_id", STR),
         ("segment", STR),
         ("city", STR),
@@ -98,6 +99,8 @@ GOLD_SCHEMAS: Final[dict[str, StructType]] = {
         ("date_key", INT),
         ("order_date", DT),
         ("customer_sk", LONG),
+        ("customer_durable_key", LONG),
+        ("customer_age_band", STR),  # derived: age band on the order date
         ("product_sk", LONG),
         ("store_sk", LONG),
         ("supplier_sk", LONG),
@@ -115,6 +118,7 @@ GOLD_SCHEMAS: Final[dict[str, StructType]] = {
         ("date_key", INT),
         ("payment_date", DT),
         ("customer_sk", LONG),
+        ("customer_durable_key", LONG),
         ("store_sk", LONG),
         ("payment_method", STR),
         ("payment_status", STR),
@@ -130,6 +134,7 @@ GOLD_SCHEMAS: Final[dict[str, StructType]] = {
         ("delivery_date_key", INT),
         ("delivery_date", DT),
         ("customer_sk", LONG),
+        ("customer_durable_key", LONG),
         ("store_sk", LONG),
         ("carrier_id", STR),
         ("shipment_status", STR),
@@ -186,6 +191,10 @@ def _date(column: str) -> ForeignKey:
 
 
 _CUSTOMER: Final = ForeignKey("customer_sk", "dim_customer", "customer_sk")
+# Identity of the customer across versions: set even when no version is valid at the event.
+_CUSTOMER_IDENTITY: Final = ForeignKey(
+    "customer_durable_key", "dim_customer", "customer_durable_key"
+)
 _PRODUCT: Final = ForeignKey("product_sk", "dim_product", "product_sk")
 _STORE: Final = ForeignKey("store_sk", "dim_store", "store_sk")
 _SUPPLIER: Final = ForeignKey("supplier_sk", "dim_supplier", "supplier_sk")
@@ -194,9 +203,15 @@ _SUPPLIER: Final = ForeignKey("supplier_sk", "dim_supplier", "supplier_sk")
 # dimensions (dim_product -> dim_supplier). Facts never carry NULL keys: no match = -1.
 FOREIGN_KEYS: Final[dict[str, tuple[ForeignKey, ...]]] = {
     "dim_product": (_SUPPLIER,),
-    "fact_sales": (_date("date_key"), _CUSTOMER, _PRODUCT, _STORE, _SUPPLIER),
-    "fact_payments": (_date("date_key"), _CUSTOMER, _STORE),
-    "fact_shipments": (_date("ship_date_key"), _date("delivery_date_key"), _CUSTOMER, _STORE),
+    "fact_sales": (_date("date_key"), _CUSTOMER, _CUSTOMER_IDENTITY, _PRODUCT, _STORE, _SUPPLIER),
+    "fact_payments": (_date("date_key"), _CUSTOMER, _CUSTOMER_IDENTITY, _STORE),
+    "fact_shipments": (
+        _date("ship_date_key"),
+        _date("delivery_date_key"),
+        _CUSTOMER,
+        _CUSTOMER_IDENTITY,
+        _STORE,
+    ),
     "fact_inventory_movements": (_date("date_key"), _STORE, _PRODUCT, _SUPPLIER),
 }
 
@@ -217,7 +232,10 @@ LATE_MASTER_DATA_KEYS: Final = frozenset({"customer_sk", "product_sk", "store_sk
 
 TABLE_COMMENTS: Final[dict[str, str]] = {
     "dim_date": "Grain: one calendar day. date_key = yyyymmdd; -1 = unknown.",
-    "dim_customer": "Grain: one customer version (SCD Type 2). customer_sk = -1: unknown.",
+    "dim_customer": (
+        "Grain: one customer version (SCD Type 2). customer_sk = -1: unknown. "
+        "customer_durable_key: same for every version of a customer."
+    ),
     "dim_product": "Grain: one product (SCD Type 1). product_sk = -1: unknown.",
     "dim_store": "Grain: one store (SCD Type 1). store_sk = -1: unknown.",
     "dim_supplier": "Grain: one supplier (SCD Type 1). supplier_sk = -1: unknown.",

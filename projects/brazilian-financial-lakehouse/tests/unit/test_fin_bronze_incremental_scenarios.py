@@ -26,7 +26,11 @@ from financial_lakehouse.ingestion import (
 )
 from financial_lakehouse.storage import InMemoryBronzeSink, LandingStore, WatermarkStore
 from financial_lakehouse.transformation import latest_deliveries
-from lakehouse_common.observability import InMemoryObservabilitySink
+from lakehouse_common.observability import (
+    RUN_ID_PATTERN,
+    InMemoryObservabilitySink,
+    run_started_label,
+)
 
 Respond = Callable[..., HttpResponse]
 FIRST_RUN = datetime(2026, 10, 6, 14, 0, tzinfo=UTC)
@@ -377,7 +381,9 @@ def test_each_run_is_one_pipeline_runs_row(
         "bronze",
         "memory:bronze_indicator_observations",
     )
-    assert (first.run_id, first.started_at) == ("20261006T140000Z", FIRST_RUN)
+    assert RUN_ID_PATTERN.fullmatch(first.run_id), first.run_id
+    assert (run_started_label(first.run_id), first.started_at) == ("20261006T140000Z", FIRST_RUN)
+    assert first.run_id != rerun.run_id
     assert (first.status, first.input_rows, first.output_rows, first.rejected_rows) == (
         "SUCCEEDED",
         3,

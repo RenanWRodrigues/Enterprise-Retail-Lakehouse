@@ -19,7 +19,7 @@ from iot_lakehouse.quality.suites import READINGS_SCHEMA
 from iot_lakehouse.synthetic.config import IotGenerationConfig
 from iot_lakehouse.synthetic.master_data import MasterData, _iso
 from iot_lakehouse.synthetic.readings import LABEL_COLUMNS, READING_COLUMNS, build_readings
-from lakehouse_common.observability import Layer, ObservabilitySink, track_run
+from lakehouse_common.observability import Layer, ObservabilitySink, new_run_id, track_run
 
 PIPELINE_NAME: Final = "iot_landing"
 CMMS_DATASETS: Final = ("equipment", "sensors", "failure_events", "maintenance_orders")
@@ -87,7 +87,7 @@ def write_landing(
     """
     with track_run(
         pipeline_name=PIPELINE_NAME,
-        run_id=f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}",
+        run_id=new_run_id(datetime.now(UTC)),
         project=PROJECT,
         layer=Layer.LANDING,
         table=Path(root).as_posix(),

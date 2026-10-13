@@ -9,7 +9,11 @@ from typing import Any
 
 import pytest
 
-from lakehouse_common.observability import InMemoryObservabilitySink
+from lakehouse_common.observability import (
+    RUN_ID_PATTERN,
+    InMemoryObservabilitySink,
+    run_started_label,
+)
 from retail_lakehouse.bronze import BronzeTarget, IngestionResult, IngestionStatus, ingest
 from retail_lakehouse.bronze.ingest import ingest_all
 
@@ -53,7 +57,12 @@ def test_one_run_per_dataset_with_counts(monkeypatch: pytest.MonkeyPatch) -> Non
         "retail",
         "bronze",
     )
-    assert (customers.run_id, customers.status) == ("20261007T120000Z", "SUCCEEDED")
+    assert (run_started_label(customers.run_id), customers.status) == (
+        "20261007T120000Z",
+        "SUCCEEDED",
+    )
+    assert RUN_ID_PATTERN.fullmatch(customers.run_id)
+    assert len({run.run_id for run in runs.runs}) == 1  # one id for every dataset of the run
     assert (customers.input_rows, customers.output_rows, customers.rejected_rows) == (120, 120, 0)
     orders = recorded["retail_bronze.bronze_orders"]  # batch already ingested: zero records
     assert (orders.status, orders.input_rows, orders.output_rows) == ("SUCCEEDED", 0, 0)

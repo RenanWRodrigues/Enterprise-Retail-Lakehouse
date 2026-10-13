@@ -293,7 +293,9 @@ Nova skill exige: entrada nesta tabela + `tests/contract/test_skills.py`.
 Com GNU make (os mesmos alvos que a CI chama; `make help` lista):
 
 ```bash
-make install            # .venv + dependências de desenvolvimento
+make install            # .venv + dependências de desenvolvimento, do lock (requirements/dev.lock.txt)
+make lock               # após mudar o pyproject: atualiza uv.lock e o lock exportado
+make lock-check         # pyproject, uv.lock e lock exportado concordam (roda na CI)
 make lint               # ruff check, ruff format --check, mypy strict
 make test               # todos os testes, exceto integration (o que a cadeia da CI roda)
 make test-unit          # Python puro, sem Spark, sem rede
@@ -307,7 +309,8 @@ Sem make (Windows sem make instalado), os comandos equivalentes:
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python -m pip install --group dev     # Windows (Linux/macOS: .venv/bin/python)
+.venv/Scripts/python -m pip install --require-hashes -r requirements/dev.lock.txt   # Windows (Linux/macOS: .venv/bin/python)
+.venv/Scripts/python -m pip install --no-deps -e .                   # os pacotes do projeto (editável)
 
 .venv/Scripts/python -m pytest                      # suíte completa
 .venv/Scripts/python -m pytest -m "not integration" # sem os testes lentos

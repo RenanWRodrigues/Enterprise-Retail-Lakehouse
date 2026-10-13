@@ -24,7 +24,7 @@ from iot_lakehouse import PROJECT
 from iot_lakehouse.bronze.ingest import BronzeTarget
 from iot_lakehouse.ingestion.source_contracts import IOT_SOURCE_CONTRACTS, DatasetContract
 from iot_lakehouse.quality.suites import LOGICAL_TYPES
-from lakehouse_common.observability import Layer, ObservabilitySink, track_run
+from lakehouse_common.observability import Layer, ObservabilitySink, new_run_id, track_run
 from lakehouse_common.quality import (
     CustomCondition,
     NotNull,
@@ -135,7 +135,7 @@ def run_cmms_silver(
     for dataset in CMMS_DATASETS:
         table = silver_cmms_table(silver_namespace, dataset)
         with track_run(
-            pipeline_name=PIPELINE_NAME, run_id=f"{at:%Y%m%dT%H%M%SZ}", project=PROJECT,
+            pipeline_name=PIPELINE_NAME, run_id=new_run_id(at), project=PROJECT,
             layer=Layer.SILVER, table=table, sink=sink,
         ) as step:  # fmt: skip
             source = spark.table(bronze.table(dataset))

@@ -31,12 +31,13 @@ Convenções: `*_sk` = surrogate key BIGINT (`-1` = membro desconhecido); `*_key
 | Coluna | Tipo | Descrição |
 |---|---|---|
 | `customer_sk` | bigint | PK; uma por versão (SCD2) |
+| `customer_durable_key` | bigint | identidade do cliente: igual em todas as versões; -1 no membro desconhecido |
 | `customer_id` | string | natural key (CRM) |
 | `segment` | string | `standard` / `premium` (rastreado, SCD2) |
 | `city` | string | cidade (rastreado, SCD2) |
 | `state` | string | UF (rastreado, SCD2) |
 | `region` | string | região do Brasil (rastreado, SCD2) |
-| `age_band` | string | faixa etária no início da versão (`18-24` … `65+`, `unknown`) — substitui a data de nascimento (PII) |
+| `age_band` | string | **historizada**: faixa etária no início da versão (`18-24` … `65+`, `unknown`), fixa enquanto a versão vale — substitui a data de nascimento (PII). Para a idade do cliente num pedido, use `fact_sales.customer_age_band` |
 | `registered_date` | date | data de cadastro (Brasília) |
 | `valid_from` | timestamp | início da versão (inclusivo) |
 | `valid_to` | timestamp | fim da versão (exclusivo); `9999-12-31` na vigente |
@@ -94,6 +95,8 @@ Grain: uma linha de pedido (`order_id`, `line_number`), qualquer status.
 | `date_key` | int | data do pedido (Brasília); `-1` se fora do calendário ou sem data |
 | `order_date` | date | data do pedido (Brasília), preservada mesmo com `date_key = -1`; NULL sem pedido |
 | `customer_sk` | bigint | versão do cliente vigente no pedido |
+| `customer_durable_key` | bigint | cliente do pedido em qualquer instante (também antes do cadastro); -1 = cliente inexistente |
+| `customer_age_band` | string | **derivada**: faixa etária do cliente na data de negócio do pedido (`18-24` … `65+`; `unknown` sem data de nascimento ou com idade < 18); diferente de `dim_customer.age_band`, que é historizada no início da versão |
 | `product_sk` | bigint | produto |
 | `store_sk` | bigint | loja (CD online para `online`/`app`) |
 | `supplier_sk` | bigint | fornecedor do produto |
@@ -116,6 +119,7 @@ Grain: um evento de pagamento (`payment_id`).
 | `date_key` | int | data do processamento (Brasília); `-1` se fora do calendário |
 | `payment_date` | date | data do processamento (Brasília), preservada |
 | `customer_sk` | bigint | cliente do pedido (versão vigente no pedido) |
+| `customer_durable_key` | bigint | cliente do pedido em qualquer instante (também antes do cadastro); -1 = cliente inexistente |
 | `store_sk` | bigint | loja do pedido |
 | `payment_method` | string | `credit_card`, `debit_card`, `pix`, `boleto`, `cash` |
 | `payment_status` | string | `approved`, `declined`, `refunded` |
@@ -136,6 +140,7 @@ Grain: uma remessa (`shipment_id`).
 | `delivery_date_key` | int | data de entrega; `-1` em trânsito ou fora do calendário |
 | `delivery_date` | date | data de entrega (Brasília), preservada; NULL em trânsito |
 | `customer_sk` | bigint | cliente do pedido (versão vigente no pedido) |
+| `customer_durable_key` | bigint | cliente do pedido em qualquer instante (também antes do cadastro); -1 = cliente inexistente |
 | `store_sk` | bigint | loja de origem (CD online) |
 | `carrier_id` | string | transportadora (fictícia) |
 | `shipment_status` | string | `in_transit`, `delivered`, `returned` |

@@ -159,3 +159,24 @@ def test_the_network_is_used_unless_responses_are_recorded(
     assert cli.main(["--config", str(config), "--record-responses", str(replay_root)]) == 0
     assert recording["transport"] is not urllib_transport
     assert recorded_at(replay_root) == recording["clock"]()  # replay with the same instant
+
+
+def test_the_report_lines_are_logged_unchanged(
+    monkeypatch: pytest.MonkeyPatch, config: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Characterization (2026-10-13, before main() was split): the operator-facing report."""
+    result = IndicatorResult(
+        "ipca_monthly", "succeeded", pages=2, records_received=12, records_ingested=3,
+        requests=2, failed_requests=0, watermark="2026-09-01",
+    )  # fmt: skip
+    _install(monkeypatch, _Pipeline(IngestionReport("R1", [result])))
+
+    with caplog.at_level("INFO", logger="financial_lakehouse"):
+        cli.main(["--config", str(config)])
+
+    lines = [r.getMessage() for r in caplog.records if r.name == "financial_lakehouse"]
+    assert lines[0] == (
+        "ipca_monthly             succeeded received=12     ingested=3      requests=2/0 failed "
+        "watermark=2026-09-01"
+    )
+    assert lines[1].startswith("metrics: ")

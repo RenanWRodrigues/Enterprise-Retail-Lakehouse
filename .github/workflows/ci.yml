@@ -32,6 +32,8 @@ jobs:
       - uses: ./.github/actions/setup
       - name: make lint
         run: make lint
+      - name: make lock-check (pyproject, uv.lock and the exported lock agree)
+        run: make lock-check
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit

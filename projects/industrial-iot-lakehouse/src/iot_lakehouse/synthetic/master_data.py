@@ -271,7 +271,14 @@ def _next_order_id(data: MasterData) -> str:
 
 
 def _build_maintenance(config: IotGenerationConfig, data: MasterData) -> None:
+    """Corrective orders first, then preventive ones: one random stream, drawn in this order."""
     rng = _stream(config, "maintenance")
+    _build_corrective(config, data, rng)
+    _build_preventive(config, data, rng)
+
+
+def _build_corrective(config: IotGenerationConfig, data: MasterData, rng: Random) -> None:
+    """One corrective order and one downtime offline period per failure."""
     for failure in data.failures:
         opened = failure.failure_timestamp + timedelta(minutes=rng.uniform(*RESPONSE_MINUTES))
         started = opened + timedelta(minutes=rng.uniform(*DISPATCH_MINUTES))
@@ -299,6 +306,10 @@ def _build_maintenance(config: IotGenerationConfig, data: MasterData) -> None:
                 failure.failure_id,
             )
         )
+
+
+def _build_preventive(config: IotGenerationConfig, data: MasterData, rng: Random) -> None:
+    """Periodic preventive orders per equipment, skipped when they overlap a failure."""
     interval = timedelta(days=config.preventive_interval_days)
     for equipment in data.equipment:
         busy = [

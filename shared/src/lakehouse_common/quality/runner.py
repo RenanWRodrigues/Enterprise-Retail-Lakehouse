@@ -71,6 +71,22 @@ def run_checks(
     schema_results = _failed_schema_results(df, checks, table_name, execution_timestamp)
     if schema_results:
         return schema_results
+    rows_checked, failed_by_name = _count_failures(df, checks)
+    return [
+        _check_result(
+            check,
+            df,
+            rows_checked=rows_checked,
+            failed_by_name=failed_by_name,
+            table_name=table_name,
+            execution_timestamp=execution_timestamp,
+        )
+        for check in checks
+    ]
+
+
+def _count_failures(df: DataFrame, checks: Sequence[QualityCheck]) -> tuple[int, dict[str, int]]:
+    """Rows and failing rows of every row-level check, in **one** Spark aggregation."""
     row_checks = [check for check in checks if isinstance(check, RowCheck)]
     flag_counts = [
         F.coalesce(F.sum(F.col(_flag_column(i)).cast("long")), F.lit(0)).alias(_flag_column(i))
@@ -81,53 +97,63 @@ def run_checks(
     )
     if summary is None:  # pragma: no cover - a global aggregation always returns one row
         raise RuntimeError("aggregation returned no rows")
-    rows_checked = int(summary[_ROWS_CHECKED])
     failed_by_name = {
         check.check_name: int(summary[_flag_column(i)]) for i, check in enumerate(row_checks)
     }
+    return int(summary[_ROWS_CHECKED]), failed_by_name
 
-    results = []
-    for check in checks:
-        details = None
-        if isinstance(check, DatasetCheck):
-            outcome = check.evaluate(df, rows_checked)
-            failed_rows = 0 if outcome.passed else rows_checked
-            failure_rate = 0.0 if outcome.passed else 1.0
-            status = Status.PASS if outcome.passed else Status(check.severity.value)
-            details = outcome.details
-        else:
-            failed_rows = failed_by_name[check.check_name]
-            failure_rate = failure_rate_of(failed_rows=failed_rows, rows_checked=rows_checked)
-            status = resolve_status(
-                failed_rows=failed_rows,
-                rows_checked=rows_checked,
-                threshold=check.threshold,
-                severity=check.severity,
-            )
-        result = CheckResult(
-            check_name=check.check_name,
-            check_type=check.check_type,
-            table_name=table_name,
-            column_name=check.column_name,
-            dimension=check.dimension,
-            status=status,
-            severity=check.severity,
-            rows_checked=rows_checked,
+
+def _check_result(  # noqa: PLR0913 - one check plus the shared counts of its run
+    check: QualityCheck,
+    df: DataFrame,
+    *,
+    rows_checked: int,
+    failed_by_name: dict[str, int],
+    table_name: str,
+    execution_timestamp: datetime,
+) -> CheckResult:
+    """The result of one check from the counts (a dataset check evaluates itself here)."""
+    details = None
+    if isinstance(check, DatasetCheck):
+        outcome = check.evaluate(df, rows_checked)
+        failed_rows = 0 if outcome.passed else rows_checked
+        failure_rate = 0.0 if outcome.passed else 1.0
+        status = Status.PASS if outcome.passed else Status(check.severity.value)
+        details = outcome.details
+    else:
+        failed_rows = failed_by_name[check.check_name]
+        if failed_rows and isinstance(check, RowCheck):
+            details = check.failure_examples(df)
+        failure_rate = failure_rate_of(failed_rows=failed_rows, rows_checked=rows_checked)
+        status = resolve_status(
             failed_rows=failed_rows,
-            failure_rate=failure_rate,
-            execution_timestamp=execution_timestamp,
-            details=details,
+            rows_checked=rows_checked,
+            threshold=check.threshold,
+            severity=check.severity,
         )
-        logger.info(
-            "dq %s on %s: %s (%d/%d failed)",
-            result.check_name,
-            table_name,
-            result.status,
-            failed_rows,
-            rows_checked,
-        )
-        results.append(result)
-    return results
+    result = CheckResult(
+        check_name=check.check_name,
+        check_type=check.check_type,
+        table_name=table_name,
+        column_name=check.column_name,
+        dimension=check.dimension,
+        status=status,
+        severity=check.severity,
+        rows_checked=rows_checked,
+        failed_rows=failed_rows,
+        failure_rate=failure_rate,
+        execution_timestamp=execution_timestamp,
+        details=details,
+    )
+    logger.info(
+        "dq %s on %s: %s (%d/%d failed)",
+        result.check_name,
+        table_name,
+        result.status,
+        failed_rows,
+        rows_checked,
+    )
+    return result
 
 
 def _failed_schema_results(

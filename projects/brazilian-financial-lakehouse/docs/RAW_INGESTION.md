@@ -25,12 +25,13 @@ transformação não faz I/O nem converte tipos (isso é Silver).
 | Requisito | Implementação |
 |---|---|
 | Timeout | `timeout_seconds` em toda requisição (padrão 30 s) |
-| Retry | 429, 500, 502, 503, 504, timeouts e erros de conexão; até `max_attempts` (padrão 5) |
+| Retry | 429, 500, 502, 503, 504, timeouts, erros de conexão e leitura truncada (`IncompleteRead`: o GET é idempotente); até `max_attempts` (padrão 5); esgotado → `RetriesExhaustedError` com `last_status` (None = falha de transporte) |
 | Backoff exponencial | `base × 2^(tentativa−1)`, teto `max_delay`, jitter ±25%; `Retry-After` respeitado (com teto) |
 | Validação de status | 2xx ok; outros 4xx → `HttpStatusError` imediato (sem retry) |
-| Logging | URL, status, bytes, tentativa; aviso a cada retry (APIs públicas: sem credenciais a esconder) |
+| Logging | URL com valores de query que parecem segredo mascarados (`mask_secrets`), status, bytes, tentativa; aviso a cada retry; o corpo nunca é registrado |
 | Paginação | SGS: janelas ≤ 10 anos · PTAX: janelas anuais + `$top`/`$skip` · IBGE: lotes de períodos explícitos |
-| Compressão | `Content-Encoding` gzip/deflate desfeito no transporte (IBGE envia gzip sem pedido) |
+| Compressão | `Content-Encoding` gzip (multi-membro)/deflate desfeito no transporte (IBGE envia gzip sem pedido); corrompido ou truncado → `ResponseFormatError`, sem retry |
+| Limite de tamanho | `max_response_bytes` (padrão 32 MiB, `config/ingestion.toml`): `Content-Length` acima recusa antes de ler; leitura em blocos de 64 KiB para assim que passa; o corpo descomprimido também é limitado (gzip bomb); o cliente confere de novo qualquer transporte → `ResponseTooLargeError`, sem retry |
 | Sem dependências | `urllib` (stdlib); transporte injetável → testes sem rede |
 
 ## Landing zone
@@ -88,6 +89,7 @@ com "response is not JSON"); corrigido no transporte, com teste de regressão, e
 
 | Arquivo | Cobre |
 |---|---|
+| `tests/unit/test_fin_http_robustness.py` | `IncompleteRead` transitório e persistente, timeouts limitados, 429/500 esgotados com `last_status`, 404 sem retry, corpo vazio, gzip/deflate corrompido e truncado, gzip multi-membro, limites (declarado, em streaming, descomprimido, no cliente), logs sem credenciais nem payload, configuração validada |
 | `tests/unit/test_fin_http_client.py` | sucesso, retry por status/timeout/conexão, 4xx sem retry, limite de tentativas, backoff exponencial + jitter, `Retry-After`, timeout repassado, JSON inválido, logging, só https, URL com sintaxe OData/IBGE, gzip/deflate |
 | `tests/unit/test_fin_source_clients.py` | URLs documentadas, janelas de 10 anos, 404 "Value(s) not found", paginação PTAX, janelas anuais, períodos IBGE, classificação, lotes, validação de schema |
 | `tests/unit/test_fin_raw_pipeline.py` | observações em texto (decimais exatos), landing com checksum, watermarks, execução completa, isolamento de falha, incremental com lookback (BCB e IBGE) |

@@ -10,13 +10,15 @@ the probe table ``_preflight_cdf`` in that schema (replaced on every run). Nothi
 written; nothing is deleted. Run it only in the smoke schema, with authorization.
 """
 
+import os
 import sys
 import urllib.request
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
 
+import pyspark
 from pyspark.sql import SparkSession
 
 from lakehouse_common.naming import validate_namespace
@@ -52,14 +54,32 @@ def _attempt(check: str, probe: Callable[[], str]) -> PreflightResult:
         return PreflightResult(check, False, safe_error_message(error).splitlines()[0][:300])
 
 
-def check_runtime(spark: SparkSession, version: tuple[int, int] | None = None) -> PreflightResult:
-    """Python >= 3.12 (the code's minimum) and the Spark version."""
+def check_runtime(
+    spark: SparkSession,
+    version: tuple[int, int] | None = None,
+    *,
+    client_version: str | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> PreflightResult:
+    """Python >= 3.12 (the code's minimum) and the three versions that differ on serverless.
+
+    Serverless runs Spark Connect: ``spark.version`` is the **server** Spark, ``pyspark`` is the
+    **client** library the runtime ships, and ``DATABRICKS_RUNTIME_VERSION`` names the runtime
+    (``local`` outside Databricks). docs/databricks/compatibility.md.
+    """
     major, minor = version or sys.version_info[:2]
+    client = client_version or pyspark.__version__
+    runtime = (os.environ if environment is None else environment).get(
+        "DATABRICKS_RUNTIME_VERSION", "local"
+    )
 
     def probe() -> str:
         if (major, minor) < MINIMUM_PYTHON:
             raise RuntimeError(f"Python {major}.{minor} < required {MINIMUM_PYTHON}")
-        return f"Python {major}.{minor}; Spark {spark.version}"
+        return (
+            f"Python {major}.{minor}; Spark {spark.version} (server); "
+            f"PySpark {client} (client); runtime: {runtime}"
+        )
 
     return _attempt("runtime", probe)
 

@@ -35,19 +35,30 @@ válido, sem exibir o token).
 
 ## 3. Código no workspace
 
-Os notebooks importam os pacotes direto do repositório (`sys.path` a partir de `Path.cwd()`), então
-o repositório precisa estar num **Git folder** do workspace **[remoto]**:
+Os notebooks instalam o pacote do projeto (wheel) e leem os arquivos `config/*.toml` do Git folder
+(ADR 0005). Antes da primeira execução **[remoto]**:
 
 1. *Workspace → Create → Git folder*, com a URL do repositório (depois do primeiro push).
-2. Abrir os notebooks a partir do Git folder; o diretório de trabalho de um notebook em Git folder
-   é o diretório dele (a verificar no preflight: o import do pacote falha com
-   `ModuleNotFoundError` se não for).
+2. Gerar o wheel localmente: `make wheel` → `dist/databricks_lakehouse_portfolio-<versão>-py3-none-any.whl`.
+3. Criar o Volume e enviar o wheel:
+   `CREATE SCHEMA IF NOT EXISTS workspace.libs; CREATE VOLUME IF NOT EXISTS workspace.libs.wheels;`
+   e depois `databricks fs cp dist/<wheel> dbfs:/Volumes/workspace/libs/wheels/`.
+4. Cada notebook começa com `%pip install --quiet --no-deps /Volumes/workspace/libs/wheels/<wheel>`
+   e `dbutils.library.restartPython()`; o `--no-deps` não toca no PySpark do runtime. Se o `%pip` de
+   um Volume não for aceito no serverless, use o mesmo wheel no ambiente do notebook ou do job
+   (painel *Environment*).
+5. O diretório de trabalho de um notebook em Git folder é o diretório dele: os `config/*.toml` são
+   lidos a partir de `Path.cwd()` (a confirmar na primeira execução).
+
+Ao mudar a versão em `pyproject.toml`, reconstrua o wheel, envie-o para o Volume e atualize a célula
+`%pip` dos notebooks; `tests/contract/test_notebook_imports.py` falha até que estejam alinhados.
 
 ## 4. Ordem de execução
 
 | # | Notebook | O que faz | Remoto |
 |---|---|---|---|
 | 0 | `shared/notebooks/00_preflight.py` (`namespace = workspace.smoke_preflight`) | detecta runtime, catálogo, schema, Volume, Delta + CDF, saída HTTPS | cria o schema, o Volume `probe` e a tabela `_preflight_cdf` |
+| 0b | `projects/brazilian-financial-lakehouse/notebooks/setup/00_network_preflight.py` | DNS + HTTPS para cada host das APIs do Financial, com o motivo da falha ([network-preflight.md](network-preflight.md)) | não grava nada |
 | 1 | SQL abaixo | cria schemas e Volumes do smoke | sim |
 | 2 | `projects/enterprise-retail-lakehouse/notebooks/00_run_pipeline.py` (`environment = smoke`) | landing sintética no Volume → Bronze → Silver → Gold | grava `workspace.smoke_retail_*` |
 | 3 | `projects/brazilian-financial-lakehouse/notebooks/00_run_pipeline.py` (`environment = smoke`, `source = api` ou `replay`) | APIs (ou replay) → Bronze → Silver → Gold | grava `workspace.smoke_financial_*` |

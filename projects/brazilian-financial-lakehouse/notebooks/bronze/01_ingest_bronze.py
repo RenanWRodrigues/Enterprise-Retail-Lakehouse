@@ -20,13 +20,18 @@ dbutils.widgets.text("replay_root", "/Volumes/workspace/smoke_financial/replay")
 
 # COMMAND ----------
 
-# Until the package is installable (Phase 1), import it from the repository (Git folder).
-import sys
+# MAGIC %pip install --quiet --no-deps /Volumes/workspace/libs/wheels/databricks_lakehouse_portfolio-0.1.0-py3-none-any.whl
+
+# COMMAND ----------
+
+dbutils.library.restartPython()  # the installed packages are importable from here on
+
+# COMMAND ----------
+
 from pathlib import Path
 
-PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/bronze -> project root
-REPO_ROOT = PROJECT_ROOT.parents[1]
-sys.path[:0] = [str(PROJECT_ROOT / "src"), str(REPO_ROOT / "shared" / "src")]
+PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/bronze -> project root (config files)
+REPO_ROOT = PROJECT_ROOT.parents[1]  # shared config files
 
 # COMMAND ----------
 
@@ -36,7 +41,7 @@ from datetime import date
 from financial_lakehouse.clients.replay import transport_for
 from financial_lakehouse.ingestion import build_incremental_ingestion, load_settings
 from financial_lakehouse.storage import DeltaBronzeSink
-from lakehouse_common.observability import DeltaObservabilitySink
+from lakehouse_common.observability.ops import load_ops_namespace, standard_sink
 
 config = load_settings(
     PROJECT_ROOT / "config" / "ingestion.toml", dbutils.widgets.get("environment")
@@ -45,11 +50,19 @@ bronze_namespace = config.bronze_table.rsplit(".", 1)[0]  # financial.bronze
 transport, recorded_at = transport_for(
     dbutils.widgets.get("source"), Path(dbutils.widgets.get("replay_root"))
 )
+OPS_NAMESPACE = load_ops_namespace(  # central operational record (docs/OBSERVABILITY.md §8)
+    REPO_ROOT / "shared" / "config" / "ops.toml", dbutils.widgets.get("environment")
+)
 pipeline = build_incremental_ingestion(
     config.landing_root,
     config.settings,
     DeltaBronzeSink(spark, config.bronze_table),
-    observer=DeltaObservabilitySink(spark, bronze_namespace),  # pipeline_runs
+    observer=standard_sink(
+        spark,
+        layer_namespace=bronze_namespace,
+        ops_namespace=OPS_NAMESPACE,
+        environment=dbutils.widgets.get("environment"),
+    ),  # pipeline_runs
     transport=transport,
     clock=(lambda: recorded_at) if recorded_at else None,
 )

@@ -26,6 +26,7 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import ArrayType, StringType, StructField, StructType, TimestampType
 
+from lakehouse_common.fingerprint import fingerprint  # row hash: decision 088
 from lakehouse_common.quality import (
     CustomCondition,
     Dimension,
@@ -76,7 +77,6 @@ _QUARANTINE_OWN: Final = (ROW_HASH_COLUMN, FAILED_CHECKS_COLUMN, EXECUTION_TIMES
 _RANK: Final = "_silver_rank"
 _CONTENT: Final = "_silver_content"
 _VERSIONS: Final = "_silver_versions"
-_SEPARATOR, _NULL = "\u001f", "\u0000"  # unit separator; a NULL marker distinct from ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,16 +124,6 @@ def quarantine_table_schema(entity: str) -> StructType:
             StructField(EXECUTION_TIMESTAMP_COLUMN, TimestampType(), False),
         ]
     )
-
-
-def fingerprint(*columns: str) -> Column:
-    """SHA-256 (hex) of the column values in order, NULL marked in its own position.
-
-    Not ``xxhash64``: it skips NULLs, so ``("a", NULL, "b")`` and ``("a", "b", NULL)`` hash
-    alike and a row shifted into a NULL column would collapse as an exact duplicate.
-    """
-    parts = [F.coalesce(F.col(column).cast("string"), F.lit(_NULL)) for column in columns]
-    return F.sha2(F.concat_ws(_SEPARATOR, *parts), 256)
 
 
 def _source(name: str) -> str:

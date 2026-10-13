@@ -6,7 +6,6 @@ Example (from the repository root):
 """
 
 import argparse
-import logging
 import os
 import sys
 from datetime import UTC, datetime
@@ -16,6 +15,7 @@ from pyspark.sql import SparkSession
 
 from iot_lakehouse.evaluation.report import write_report
 from iot_lakehouse.evaluation.run import evaluate, load_evaluation_config
+from lakehouse_common.logging import setup_logging
 
 DEFAULT_CONFIG = Path(__file__).parents[3] / "config" / "evaluation.toml"
 
@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output", type=Path, required=True, help="report directory")
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    setup_logging(os.environ)  # text by default; LAKEHOUSE_LOG_FORMAT=json; optional webhook
     os.environ.setdefault("PYSPARK_PYTHON", sys.executable)  # Windows has no "python3"
     spark = (
         SparkSession.builder.appName("iot-evaluation")

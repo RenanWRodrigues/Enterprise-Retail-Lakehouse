@@ -1,5 +1,8 @@
 # Relatório da campanha de testes — 2026-10-07
 
+> Execução mais recente da suíte completa (código atual): [audits/test-run-2026-10-13.md](audits/test-run-2026-10-13.md).
+> Os números abaixo descrevem o código de 2026-10-07.
+
 Objetivo: **encontrar bugs**, sem implementar funcionalidade nova. Foram executadas as
 categorias unit, transformation, data_quality e contract, e integration onde o ambiente permitiu.
 Para cada falha: causa raiz, reprodução, teste de regressão quando aplicável, correção, teste

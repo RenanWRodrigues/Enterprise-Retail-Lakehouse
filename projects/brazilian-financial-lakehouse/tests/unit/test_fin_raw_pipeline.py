@@ -20,6 +20,7 @@ from financial_lakehouse.ingestion import (
 )
 from financial_lakehouse.storage import InMemoryBronzeSink, LandingStore, WatermarkStore
 from financial_lakehouse.transformation import to_raw_observations
+from lakehouse_common.observability import RUN_ID_PATTERN, run_started_label
 
 Respond = Callable[..., HttpResponse]
 Payload = Callable[[str], bytes]
@@ -140,7 +141,9 @@ def test_full_run_lands_every_indicator_and_advances_watermarks(
     manifest = json.loads(
         (tmp_path / "_manifests" / f"{report.run_id}.json").read_text(encoding="utf-8")
     )
-    assert manifest["run_id"] == report.run_id == "20261005T120000Z"
+    assert manifest["run_id"] == report.run_id  # one id per run, shared by manifest and report
+    assert RUN_ID_PATTERN.fullmatch(report.run_id)
+    assert run_started_label(report.run_id) == "20261005T120000Z"
     assert all(f["sha256"] and f["bytes"] > 0 for f in manifest["files"])
     watermarks = WatermarkStore(tmp_path)
     assert watermarks.get("igpm_monthly") == "2025-03-01"

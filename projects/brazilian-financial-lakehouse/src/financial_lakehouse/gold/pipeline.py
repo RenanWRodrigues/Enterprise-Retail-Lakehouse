@@ -18,6 +18,7 @@ from lakehouse_common.observability import (
     Layer,
     ObservabilitySink,
     PipelineRun,
+    new_run_id,
     track_run,
 )
 from lakehouse_common.quality import run_suite
@@ -38,7 +39,7 @@ def run_gold(
     observer = sink or DeltaObservabilitySink(spark, gold_namespace)
     with track_run(
         pipeline_name=PIPELINE_NAME,
-        run_id=f"{started:%Y%m%dT%H%M%SZ}",
+        run_id=new_run_id(started),
         project=PROJECT,
         layer=Layer.GOLD,
         table=f"{validate_table_name(gold_namespace)}.*",

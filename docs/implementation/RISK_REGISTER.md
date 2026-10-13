@@ -16,7 +16,7 @@ Riscos da evolução planejada em [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md), re
 | R09 | Alteração em `lakehouse_common` quebra outro projeto | Média | Alto | testes do shared + suíte dos três projetos a cada mudança; regra de admissão do `shared/README.md` | falha fora do projeto alterado |
 | R10 | Escopo do IoT cresce além de uma etapa | Alta | Médio | entregar 4.1–4.4 em incrementos separados, cada um com testes e documentação | etapa sem critério de aceite fechado |
 | R11 | Volume completo (1,0 milhão Retail; ~32 milhões IoT, estimativa) estoura memória/tempo local | Alta | Médio | proibido sem autorização; medir primeiro no Databricks | pedido de carga completa |
-| R12 | Dependências transitivas mudam entre instalações (sem lock) | Média | Médio | M5; CI instala versões fixadas diretas | falha só na CI ou só local |
+| R12 | Dependências transitivas mudam entre instalações (sem lock) | Média | Médio | M5; CI instala versões fixadas diretas | falha só na CI ou só local **Mitigado em 2026-10-13** (decisão 085: lock com hashes e `make lock-check` na CI) |
 | R13 | Exposição de credenciais ao configurar Databricks ou alertas | Baixa | Alto | Databricks Secrets; `.env` ignorado e não lido pelo agente; scanner `test_no_secrets.py` | token em diff ou log |
 | R14 | E-mail pessoal no histórico ao publicar (sem commits ainda) | Alta | Baixo | configurar e-mail `noreply` do GitHub antes do primeiro commit | `git config user.email` não `noreply` |
 | R15 | Repositório sem commits: nenhuma forma de reverter mudanças desta evolução | Alta | Alto | recomendar o commit inicial do estado atual antes da Etapa 1 (só com autorização) | primeira alteração de pipeline sem commit base |

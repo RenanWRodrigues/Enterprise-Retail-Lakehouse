@@ -6,6 +6,7 @@ CMMS), [BRONZE.md](BRONZE.md). Saída:
 - `silver_sensor_readings`: tipada, uma linha por `reading_id`, unidades canônicas;
 - `silver_sensor_readings_quarantine`: linha do Bronze como chegou + motivos;
 - `silver_processed_files`: progresso;
+- `silver_discovery_checkpoints`: última versão do Bronze consumida (descoberta incremental);
 - `silver_run_metrics`: métricas por execução.
 
 Código:
@@ -21,7 +22,7 @@ Regras de linha compartilhadas: `quality/suites.py::reading_row_rules`. Notebook
 
 | Etapa | Função | O que faz |
 |---|---|---|
-| Normalização | `normalize` | texto aparado (vazio → NULL), timestamps ISO 8601 → instante UTC (`try_cast`), valor → double; o texto entregue fica em `_src_*`; `_content_hash` = SHA-256 da medição como entregue |
+| Normalização | `normalize` | texto aparado (vazio → NULL), timestamps ISO 8601 → instante UTC (`try_cast`), valor → double; o texto entregue fica em `_src_*`; `_content_hash` = SHA-256 da medição como entregue (texto aparado, NULL com marcador próprio; `lakehouse_common.fingerprint`, decisão 088) |
 | Dados mestres | `sensor_reference` | unidade e limites físicos do sensor, última entrega por `sensor_id` |
 | Unidades | `enrich` + `units.py` | converte para a unidade canônica do sensor quando há conversão exata |
 | Contrato e física | `silver_reading_rules` | texto que não converte, regras compartilhadas (timestamp, valor, limites, unidade) → quarentena com todos os motivos |
@@ -94,6 +95,11 @@ lote, `unknown_sensor_systemic` é CRITICAL.
 - **Unidade de progresso:** o arquivo do Bronze (`_file_id`), como no Bronze. Pendente = ainda
   não está em `silver_processed_files`, e um arquivo tardio numa partição antiga é só mais um
   pendente.
+- **Descoberta incremental** (ADR 0004): os `_file_id` vêm do Change Data Feed dos commits do
+  Bronze posteriores ao checkpoint (`silver_discovery_checkpoints`), e não de uma varredura da
+  tabela. O checkpoint avança só depois da publicação e da marcação. Primeira execução, CDF
+  ausente ou histórico indisponível: varredura completa com o motivo no log. `rediscover=True`
+  força a varredura; `reprocess=[...]` processa de novo arquivos já processados.
 - **Silver fixada:** a Silver é lida `VERSION AS OF` a versão do início. Sem cache no serverless,
   as contagens são recalculadas, e sem a versão fixa as leituras do próprio lote pareceriam
   duplicatas depois do MERGE.

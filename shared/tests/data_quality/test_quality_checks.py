@@ -214,6 +214,27 @@ def test_referential_integrity_flags_orphans_without_multiplying_rows(spark: Spa
     # c-3 is an orphan; NULL is not_null's concern; duplicated reference keys add no rows.
     assert (result.failed_rows, result.rows_checked) == (1, 3)
     assert result.dimension is Dimension.REFERENTIAL_INTEGRITY
+    assert result.details is None  # examples are opt-in
+
+
+def test_referential_integrity_lists_a_bounded_sorted_sample_of_orphans(
+    spark: SparkSession,
+) -> None:
+    customers = spark.createDataFrame([("c-1",)], "customer_id string")
+    orphans = ["c-9", "c-3", "c-3", "c-7", None, "c-1"]
+    orders = _orders(spark, [_order(customer_id=c) for c in orphans])
+    check = ReferentialIntegrity("customer_id", customers, "customer_id", examples=2)
+
+    [result] = _run(orders, check).values()
+
+    assert result.failed_rows == 4  # c-9, c-3 twice, c-7: NULL and c-1 are not orphans
+    assert result.details == "examples: c-3, c-7"  # distinct, ascending, at most 2
+
+
+def test_referential_integrity_rejects_a_negative_example_count(spark: SparkSession) -> None:
+    customers = spark.createDataFrame([("c-1",)], "customer_id string")
+    with pytest.raises(ValueError, match="examples"):
+        ReferentialIntegrity("customer_id", customers, "customer_id", examples=-1)
 
 
 # --- row_count -----------------------------------------------------------------------------

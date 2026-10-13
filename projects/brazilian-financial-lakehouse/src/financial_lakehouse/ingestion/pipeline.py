@@ -35,15 +35,17 @@ from financial_lakehouse.clients import (
 )
 from financial_lakehouse.clients.base import RawPage, ResponseSchemaError
 from financial_lakehouse.clients.http import (
+    DEFAULT_MAX_RESPONSE_BYTES,
     HttpError,
     RequestMetrics,
     Transport,
+    limited_urllib_transport,
     urllib_transport,
 )
 from financial_lakehouse.storage import BronzeSink, LandingStore, WatermarkStore
 from financial_lakehouse.transformation import BronzeRecord, to_bronze_records, to_raw_observations
 from lakehouse_common.config import load_environment
-from lakehouse_common.observability import Layer, ObservabilitySink, track_run
+from lakehouse_common.observability import Layer, ObservabilitySink, new_run_id, track_run
 
 logger = logging.getLogger(__name__)
 BRASILIA_OFFSET: Final = timedelta(hours=-3)
@@ -60,10 +62,13 @@ class IngestionSettings:
     lookback_periods: int = 6  # same idea for IBGE period ids
     timeout_seconds: float = 30.0
     max_attempts: int = 5
+    max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES  # received or decoded body
 
     def __post_init__(self) -> None:
         if self.lookback_days < 0 or self.lookback_periods < 0 or self.max_attempts < 1:
             raise ValueError("lookbacks must be >= 0 and max_attempts >= 1")
+        if self.timeout_seconds <= 0 or self.max_response_bytes < 1:
+            raise ValueError("timeout_seconds and max_response_bytes must be positive")
         # Gold flags only the month in progress as partial: a history that starts mid-month would
         # make the first month look complete (Selic compounded, USD averaged over half of it).
         if self.backfill_start.day != 1:
@@ -318,12 +323,13 @@ class IncrementalIngestion:
         changed are inserted, and the checkpoint does not move backwards.
         """
         now = self._clock().astimezone(UTC)
+        run_id = new_run_id(now)  # once: the run record, the landing and the report share it
         if self._observer is None:
-            return self._run(indicators, now, raise_on_failure, reprocess_from)
+            return self._run(indicators, now, run_id, raise_on_failure, reprocess_from)
         try:
             with track_run(
                 pipeline_name=PIPELINE_NAME,
-                run_id=f"{now:%Y%m%dT%H%M%SZ}",
+                run_id=run_id,
                 project=PROJECT,
                 layer=Layer.BRONZE,
                 table=self._bronze.name,
@@ -332,7 +338,7 @@ class IncrementalIngestion:
                 monotonic=self._monotonic,
             ) as step:
                 try:  # always raise inside the step: a failed indicator makes the run FAILED
-                    report = self._run(indicators, now, True, reprocess_from)
+                    report = self._run(indicators, now, run_id, True, reprocess_from)
                 except IngestionFailedError as failure:
                     _record(step.record_counts, failure.report)
                     raise
@@ -347,11 +353,12 @@ class IncrementalIngestion:
         self,
         indicators: Sequence[Indicator],
         now: datetime,
+        run_id: str,
         raise_on_failure: bool,
         reprocess_from: date | None,
     ) -> IngestionReport:
         started = self._monotonic()
-        report = IngestionReport(run_id=f"{now:%Y%m%dT%H%M%SZ}", reprocess_from=reprocess_from)
+        report = IngestionReport(run_id=run_id, reprocess_from=reprocess_from)
         if reprocess_from:
             logger.info("reprocessing since %s (on top of the incremental window)", reprocess_from)
         files: list[dict[str, Any]] = []
@@ -445,11 +452,14 @@ def build_incremental_ingestion(  # noqa: PLR0913 - keyword-only wiring options
     the run requests exactly the recorded URLs.
     """
     metrics = RequestMetrics()
+    if transport is urllib_transport:  # the real network: stream with the configured limit
+        transport = limited_urllib_transport(settings.max_response_bytes)
     http = HttpClient(
         transport=transport,
         policy=RetryPolicy(max_attempts=settings.max_attempts),
         timeout_seconds=settings.timeout_seconds,
         metrics=metrics,
+        max_response_bytes=settings.max_response_bytes,
     )
     return IncrementalIngestion(
         sgs=SgsClient(http),

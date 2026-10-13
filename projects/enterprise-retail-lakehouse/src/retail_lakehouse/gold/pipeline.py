@@ -46,23 +46,29 @@ def stage_gold(tables: Mapping[str, DataFrame], target: GoldTarget) -> dict[str,
 
 def _record_gate(step: RunTracker, results: list[CheckResult]) -> None:
     """Counts first (kept on failure), then the policy: CRITICAL raises here."""
-    rows_by_table = {result.table_name: result.rows_checked for result in results}
+    rows_by_table = {  # Gold tables only: the R3 reconciliation is a gate input, not output
+        result.table_name: result.rows_checked
+        for result in results
+        if result.table_name in GOLD_SCHEMAS
+    }
     step.record_counts(input_rows=sum(rows_by_table.values()))
     step.record_quality(results)
     step.record_counts(output_rows=sum(rows_by_table.values()), rejected_rows=0)
 
 
-def validate_gold(
+def validate_gold(  # noqa: PLR0913 - keyword-only after `target`
     tables: Mapping[str, DataFrame],
     target: GoldTarget,
     *,
     run_id: str,
     sink: ObservabilitySink,
     execution_timestamp: datetime,
+    inventory_reconciliation: DataFrame | None = None,
 ) -> dict[str, DataFrame]:
     """Stage and gate every table (one observed step); return the staged tables if they pass.
 
-    Raises ``CriticalQualityError`` (run ``FAILED``) when any CRITICAL check fails.
+    ``inventory_reconciliation`` (``gold.inventory``) adds R3 to the gate. Raises
+    ``CriticalQualityError`` (run ``FAILED``) when any CRITICAL check fails.
     """
     with track_run(
         pipeline_name=GOLD_PIPELINE_NAME,
@@ -73,7 +79,8 @@ def validate_gold(
         sink=sink,
     ) as step:
         staged = stage_gold(tables, target)
-        results = run_suite(retail_gold_suite(staged), execution_timestamp=execution_timestamp)
+        suite = retail_gold_suite(staged, inventory_reconciliation=inventory_reconciliation)
+        results = run_suite(suite, execution_timestamp=execution_timestamp)
         try:
             _record_gate(step, results)
         except CriticalQualityError:
@@ -106,22 +113,31 @@ def _publish_table(
     logger.info("gold %s published", table)
 
 
-def write_gold(
+def write_gold(  # noqa: PLR0913 - keyword-only after `target`
     tables: Mapping[str, DataFrame],
     target: GoldTarget,
     *,
     run_id: str,
     sink: ObservabilitySink,
     now: datetime | None = None,
+    inventory_reconciliation: DataFrame | None = None,
 ) -> None:
     """Publish the Gold model only if every table passes the gate (see the module docstring).
+
+    ``inventory_reconciliation`` (R3, ``gold.inventory.inventory_reconciliation`` over Silver)
+    is gated with the tables; production passes it (notebooks/gold/01_build_gold.py).
 
     Effects: replaces the staging tables always; replaces the Gold tables only on success.
     Raises ``CriticalQualityError`` (nothing published) or the original write error.
     """
     execution_timestamp = (now or datetime.now(UTC)).astimezone(UTC)
     staged = validate_gold(
-        tables, target, run_id=run_id, sink=sink, execution_timestamp=execution_timestamp
+        tables,
+        target,
+        run_id=run_id,
+        sink=sink,
+        execution_timestamp=execution_timestamp,
+        inventory_reconciliation=inventory_reconciliation,
     )
     spark = next(iter(staged.values())).sparkSession
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {target.namespace}")

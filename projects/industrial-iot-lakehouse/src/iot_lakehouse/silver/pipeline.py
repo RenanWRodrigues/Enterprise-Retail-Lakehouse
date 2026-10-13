@@ -1,6 +1,8 @@
 """IoT Silver run (I/O): pending Bronze files -> classified readings -> Delta, observed.
 
-1. pending = Bronze ``_file_id``s not in ``silver_processed_files`` (a file is the unit, as in
+1. pending = Bronze ``_file_id``s of the commits after the checkpoint (Change Data Feed;
+   ``lakehouse_common.incremental``, ADR 0004) not in ``silver_processed_files`` (a file is the
+   unit, as in
    the Bronze; a late file in an old partition is just another pending file);
 2. the Silver as it is now is pinned (``VERSION AS OF``): it is "what arrived first" for
    deduplication and out-of-order detection, and stays so after this run's own MERGE;
@@ -15,6 +17,7 @@ A failure before step 6 writes nothing; a failure inside it is repeated harmless
 run (insert-only MERGEs, files not yet marked).
 """
 
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -35,8 +38,22 @@ from iot_lakehouse.silver.standardize import (
     sensor_reference,
 )
 from lakehouse_common.config import load_environment
+from lakehouse_common.incremental import (
+    Checkpoint,
+    DeltaCheckpointStore,
+    Discovery,
+    SparkDeltaLog,
+    discover,
+    pending_units,
+)
 from lakehouse_common.naming import validate_namespace
-from lakehouse_common.observability import Layer, ObservabilitySink, RunTracker, track_run
+from lakehouse_common.observability import (
+    Layer,
+    ObservabilitySink,
+    RunTracker,
+    new_run_id,
+    track_run,
+)
 from lakehouse_common.quality import (
     CheckResult,
     CheckSet,
@@ -63,6 +80,7 @@ METRICS_SCHEMA: Final = StructType(
     ]
 )
 PROCESSED_SCHEMA: Final = "file_id string, run_id string, processed_at timestamp"
+FILE_COLUMNS: Final = ("_file_id",)  # one discovered unit
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +109,10 @@ class SilverTarget:
     def metrics(self) -> str:
         return self._name("silver_run_metrics")
 
+    @property
+    def checkpoints(self) -> str:
+        return self._name("silver_discovery_checkpoints")
+
 
 @dataclass(frozen=True, slots=True)
 class SilverSettings:
@@ -109,18 +131,21 @@ def load_silver_settings(path: Path, environment: str) -> SilverSettings:
     )
 
 
-def pending_files(spark: SparkSession, bronze_table: str, processed_table: str) -> list[str]:
-    """Bronze files not yet processed (one id per file reaches the driver)."""
-    if not spark.catalog.tableExists(bronze_table):
-        return []
-    files = spark.table(bronze_table).select("_file_id").distinct()
-    if spark.catalog.tableExists(processed_table):
-        files = files.join(
-            spark.table(processed_table).select(F.col("file_id").alias("_file_id")),
-            "_file_id",
-            "left_anti",
-        )
-    return sorted(r["_file_id"] for r in files.collect())
+def processed_files(spark: SparkSession, processed_table: str) -> set[str]:
+    """Files already processed (one id per file of the control table; never data rows)."""
+    if not spark.catalog.tableExists(processed_table):
+        return set()
+    return {r["file_id"] for r in spark.table(processed_table).select("file_id").collect()}
+
+
+def plan_files(
+    discovery: Discovery, *, processed: Collection[str], reprocess: Sequence[str] = ()
+) -> list[str]:
+    """Discovered files not processed yet, plus the files explicitly asked to be reprocessed."""
+    discovered = [str(unit[0]) for unit in discovery.units]
+    return pending_units(
+        discovered, processed=processed, reprocess=reprocess, known={*processed, *discovered}
+    )
 
 
 def _pinned(spark: SparkSession, table: str) -> DataFrame | None:
@@ -275,7 +300,7 @@ def quarantine_check(metrics: BatchMetrics, table: str, at: datetime) -> CheckRe
 def _consume(
     spark: SparkSession, step: RunTracker, settings: SilverSettings, files: list[str], at: datetime
 ) -> None:
-    run_id, target = f"{at:%Y%m%dT%H%M%SZ}", settings.target
+    run_id, target = step.run.run_id, settings.target  # the observed run's id
     bronze = spark.table(settings.bronze.table("sensor_readings")).where(
         F.col("_file_id").isin(files)
     )
@@ -296,24 +321,47 @@ def _consume(
     publish(batch, target, files, run_id, at)
 
 
-def run_silver(
+def run_silver(  # noqa: PLR0913 - keyword-only
     spark: SparkSession,
     *,
     settings: SilverSettings,
     ingestion_timestamp: datetime,
     sink: ObservabilitySink,
+    rediscover: bool = False,
+    reprocess: Sequence[str] = (),
 ) -> list[str]:
-    """One observed Silver run over the pending Bronze files; returns the files processed."""
+    """One observed Silver run over the pending Bronze files; returns the files processed.
+
+    The checkpoint moves to the discovered Bronze version only after the files were published
+    and marked processed. ``rediscover``: full scan (recovery); ``reprocess``: processed files
+    to process again (insert-only MERGEs keep the Silver unchanged).
+    """
     at = utc(ingestion_timestamp)
     target = settings.target
+    bronze_table = settings.bronze.table("sensor_readings")
+    run_id = new_run_id(at)
+    checkpoints = DeltaCheckpointStore(spark, target.checkpoints)
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {target.namespace}")
     with track_run(
-        pipeline_name=PIPELINE_NAME, run_id=f"{at:%Y%m%dT%H%M%SZ}", project=PROJECT,
+        pipeline_name=PIPELINE_NAME, run_id=run_id, project=PROJECT,
         layer=Layer.SILVER, table=target.readings, sink=sink,
     ) as step:  # fmt: skip
-        files = pending_files(spark, settings.bronze.table("sensor_readings"), target.processed)
+        discovery = discover(
+            SparkDeltaLog(spark),
+            bronze_table,
+            columns=FILE_COLUMNS,
+            checkpoint=checkpoints.read(PIPELINE_NAME, bronze_table),
+            rediscover=rediscover,
+        )
+        files = plan_files(
+            discovery, processed=processed_files(spark, target.processed), reprocess=reprocess
+        )
         if not files:
             step.record_counts(input_rows=0, output_rows=0, rejected_rows=0, duplicate_rows=0)
         else:
             _consume(spark, step, settings, files, at)
+        if discovery.end is not None:  # files published and marked: consume the versions
+            checkpoints.commit(
+                Checkpoint(PIPELINE_NAME, bronze_table, discovery.end, discovery.mode, run_id, at)
+            )
     return files

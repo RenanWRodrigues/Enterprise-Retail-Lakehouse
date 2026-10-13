@@ -13,7 +13,7 @@ from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import StructType
 
-from retail_lakehouse.gold.dimensions import build_dim_customer
+from retail_lakehouse.gold.dimensions import build_dim_customer, customer_birth_dates
 from retail_lakehouse.gold.facts import build_fact_sales
 from retail_lakehouse.silver.reference import STATE_REGIONS
 from retail_lakehouse.silver.schemas import silver_table_schema
@@ -138,7 +138,8 @@ def test_sales_take_the_version_valid_at_their_business_time(
     )
     stores = spark.createDataFrame([(3, "S1")], "store_sk long, store_id string")
 
-    sales = build_fact_sales(orders, items, batches["dim"], products, stores)
+    births = customer_birth_dates(batches["stored"])
+    sales = build_fact_sales(orders, items, batches["dim"], products, stores, birth_dates=births)
 
     dim = batches["dim"].select("customer_sk", "valid_from", "valid_to")
     joined = sales.join(orders.select("order_id", "order_timestamp"), "order_id").join(

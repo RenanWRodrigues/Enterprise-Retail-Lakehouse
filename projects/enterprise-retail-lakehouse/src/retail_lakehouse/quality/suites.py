@@ -47,6 +47,7 @@ from retail_lakehouse.gold.schemas import (
 from retail_lakehouse.silver.schemas import SILVER_SCHEMAS
 
 SYSTEMIC_ORPHAN_RATE: Final = 0.05
+ORPHAN_EXAMPLES: Final = 5  # orphan keys listed in a finding's details
 BUSINESS_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "categories": ("category_id",),
     "suppliers": ("supplier_id",),
@@ -73,9 +74,20 @@ def _contract(entity: str) -> list[QualityCheck]:
 
 
 def _orphans(column: str, reference: DataFrame, entity: str) -> list[QualityCheck]:
+    """NULL key = ERROR; key absent from ``reference`` = WARNING, CRITICAL above 5% (ADR 007).
+
+    Findings list a few orphan keys (``details``) for diagnosis.
+    """
     return [
         NotNull(column, severity=ERROR, name=f"missing_{entity}"),
-        ReferentialIntegrity(column, reference, column, severity=WARNING, name=f"unknown_{entity}"),
+        ReferentialIntegrity(
+            column,
+            reference,
+            column,
+            severity=WARNING,
+            name=f"unknown_{entity}",
+            examples=ORPHAN_EXAMPLES,
+        ),
         ReferentialIntegrity(
             column,
             reference,
@@ -83,6 +95,7 @@ def _orphans(column: str, reference: DataFrame, entity: str) -> list[QualityChec
             severity=CRITICAL,
             threshold=SYSTEMIC_ORPHAN_RATE,
             name=f"unknown_{entity}_systemic",
+            examples=ORPHAN_EXAMPLES,
         ),
     ]
 
@@ -97,6 +110,8 @@ REFERENCES: Final[dict[str, tuple[str, ...]]] = {
     "orders": ("customers",),
     "order_items": ("products", "orders"),
     "payments": ("orders",),
+    "shipments": ("orders",),
+    "inventory_movements": ("products", "stores"),
 }
 
 
@@ -171,6 +186,15 @@ def _entity_checks(entity: str, tables: Mapping[str, DataFrame]) -> list[Quality
             ReferentialIntegrity(
                 "order_id", tables["orders"], "order_id", severity=WARNING, name="unknown_order"
             ),
+        ]
+    if entity == "shipments":
+        return [*checks, *_orphans("order_id", tables["orders"], "order")]
+    if entity == "inventory_movements":
+        # reference_id is optional and points to different documents: not a foreign key
+        return [
+            *checks,
+            *_orphans("product_id", tables["products"], "product"),
+            *_orphans("store_id", tables["stores"], "store"),
         ]
     return checks
 
@@ -263,17 +287,63 @@ def _gold_keys(name: str, tables: Mapping[str, DataFrame]) -> list[QualityCheck]
     return checks
 
 
-def retail_gold_suite(tables: Mapping[str, DataFrame]) -> list[CheckSet]:
+INVENTORY_RECONCILIATION: Final = "inventory_reconciliation"
+SYSTEMIC_INVENTORY_MISMATCH_RATE: Final = 0.05  # share of snapshot keys (same rule as orphans)
+
+
+def inventory_reconciliation_suite(frame: DataFrame) -> list[CheckSet]:
+    """R3 on ``gold.inventory.inventory_reconciliation``: exact match, in units (tolerance 0).
+
+    A mismatched key is ERROR: a count error or an unrecorded/quarantined movement, an inventory
+    finding that does not invalidate the sales facts (alert, Gold published). Above 5% of the
+    keys it is CRITICAL: the ledger or the snapshot load is broken and the stock metrics
+    would be wrong (nothing published, previous Gold kept).
+    """
+    condition = "difference = 0"
+    return [
+        CheckSet(
+            INVENTORY_RECONCILIATION,
+            frame,
+            [
+                CustomCondition(
+                    name="r3__snapshot_matches_movements",
+                    condition=condition,
+                    column="quantity_on_hand",
+                    severity=ERROR,
+                    dimension=Dimension.CONSISTENCY,
+                ),
+                CustomCondition(
+                    name="r3__snapshot_matches_movements_systemic",
+                    condition=condition,
+                    column="quantity_on_hand",
+                    severity=CRITICAL,
+                    threshold=SYSTEMIC_INVENTORY_MISMATCH_RATE,
+                    dimension=Dimension.CONSISTENCY,
+                ),
+            ],
+        )
+    ]
+
+
+def retail_gold_suite(
+    tables: Mapping[str, DataFrame], *, inventory_reconciliation: DataFrame | None = None
+) -> list[CheckSet]:
     """The publication gate of every Gold table, dimensions first (``GOLD_SCHEMAS`` order).
 
     CRITICAL: schema (columns and types), duplicated grain, NULL key, dangling foreign key,
     dimension member without natural key. WARNING: facts linked to the unknown customer, product
     or store (orphans the contract keeps, ADR 007), and facts dated outside the calendar (unknown
     date key, event date kept). ``run_suite`` stops at a schema failure.
+    ``inventory_reconciliation`` adds R3 (``inventory_reconciliation_suite``) after the tables.
     """
     missing = sorted(set(GOLD_SCHEMAS) - set(tables))
     if missing:
         raise ValueError(f"missing Gold tables: {missing}")
+    r3 = (
+        []
+        if inventory_reconciliation is None
+        else inventory_reconciliation_suite(inventory_reconciliation)
+    )
     return [
         CheckSet(
             name,
@@ -285,4 +355,4 @@ def retail_gold_suite(tables: Mapping[str, DataFrame]) -> list[CheckSet]:
             ],
         )
         for name in GOLD_SCHEMAS
-    ]
+    ] + r3

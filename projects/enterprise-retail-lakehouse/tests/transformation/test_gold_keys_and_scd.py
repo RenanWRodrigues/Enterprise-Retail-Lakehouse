@@ -17,6 +17,7 @@ from retail_lakehouse.gold import (
     business_date_key,
     surrogate_key,
 )
+from retail_lakehouse.gold.dimensions import customer_birth_dates
 from retail_lakehouse.silver.schemas import SILVER_SCHEMAS
 
 T1 = datetime(2024, 1, 1, tzinfo=UTC)
@@ -203,7 +204,12 @@ def _sales_inputs(spark: SparkSession) -> dict[str, DataFrame]:
 def test_facts_use_the_customer_version_valid_at_the_event(spark: SparkSession) -> None:
     inputs = _sales_inputs(spark)
     sales = build_fact_sales(
-        inputs["orders"], inputs["items"], inputs["customers"], inputs["products"], inputs["stores"]
+        inputs["orders"],
+        inputs["items"],
+        inputs["customers"],
+        inputs["products"],
+        inputs["stores"],
+        birth_dates=customer_birth_dates(_customers(spark)),
     )
     versions = {
         r["segment"]: r["customer_sk"]
@@ -220,11 +226,112 @@ def test_facts_use_the_customer_version_valid_at_the_event(spark: SparkSession) 
     assert keys == {"O1": versions["standard"], "O2": versions["premium"], "O3": UNKNOWN_KEY}
 
 
+BEFORE_REGISTRATION = datetime(2023, 12, 1, tzinfo=UTC)  # C1 registers at T1
+EVENT_TIMES = {
+    "O-BEFORE": ("C1", BEFORE_REGISTRATION),
+    "O-AT-START": ("C1", T1),  # exactly valid_from of the first version
+    "O-FIRST": ("C1", datetime(2024, 2, 1, tzinfo=UTC)),
+    "O-SECOND": ("C1", datetime(2024, 7, 1, tzinfo=UTC)),  # after the change at T2
+    "O-UNKNOWN": ("C404", datetime(2024, 7, 1, tzinfo=UTC)),  # customer not in Silver
+}
+
+
+def _sales_at_event_times(spark: SparkSession) -> tuple[DataFrame, DataFrame]:
+    """fact_sales for one line per EVENT_TIMES order, and the dim_customer it was built with."""
+    inputs = _sales_inputs(spark)
+    orders = _df(
+        spark,
+        "orders",
+        [
+            (order_id, customer, "ST1", "store", "delivered", at, Decimal("0.00"))
+            for order_id, (customer, at) in EVENT_TIMES.items()
+        ],
+    )
+    items = _df(
+        spark,
+        "order_items",
+        [(order_id, 1, "P1", 1, Decimal("10.00"), Decimal("0.00")) for order_id in EVENT_TIMES],
+    )
+    sales = build_fact_sales(
+        orders,
+        items,
+        inputs["customers"],
+        inputs["products"],
+        inputs["stores"],
+        birth_dates=customer_birth_dates(_customers(spark)),
+    )
+    return sales, inputs["customers"]
+
+
+def test_event_before_the_first_version_keeps_the_customer_identity(spark: SparkSession) -> None:
+    """Regression: an order placed before registration lost its customer (customer_sk = -1, no
+    other key). The version stays unknown, since no attributes are known for that instant, but
+    the durable key still identifies the customer."""
+    sales, dim = _sales_at_event_times(spark)
+    durable = {
+        r["customer_id"]: r["customer_durable_key"]
+        for r in dim.select("customer_id", "customer_durable_key").distinct().collect()
+    }
+
+    keys = {
+        r["order_id"]: r["customer_durable_key"]
+        for r in sales.select("order_id", "customer_durable_key").collect()
+    }
+
+    assert keys == {
+        "O-BEFORE": durable["C1"],
+        "O-AT-START": durable["C1"],
+        "O-FIRST": durable["C1"],
+        "O-SECOND": durable["C1"],
+        "O-UNKNOWN": UNKNOWN_KEY,
+    }
+
+
+def test_customer_version_is_point_in_time_and_never_a_later_one(spark: SparkSession) -> None:
+    sales, dim = _sales_at_event_times(spark)
+    versions = {
+        r["segment"]: r["customer_sk"]
+        for r in dim.where(F.col("customer_id") == "C1").select("segment", "customer_sk").collect()
+    }
+
+    keys = {
+        r["order_id"]: r["customer_sk"] for r in sales.select("order_id", "customer_sk").collect()
+    }
+
+    assert keys == {
+        "O-BEFORE": UNKNOWN_KEY,  # no version valid yet: the first one is not stretched back
+        "O-AT-START": versions["standard"],  # valid_from is inclusive
+        "O-FIRST": versions["standard"],
+        "O-SECOND": versions["premium"],
+        "O-UNKNOWN": UNKNOWN_KEY,
+    }
+
+
+def test_durable_key_is_shared_by_versions_and_unique_per_customer(spark: SparkSession) -> None:
+    dim = build_dim_customer(_customers(spark))
+
+    rows = dim.select("customer_id", "customer_sk", "customer_durable_key").collect()
+    by_customer: dict[str | None, set[int]] = {}
+    for row in rows:
+        by_customer.setdefault(row["customer_id"], set()).add(row["customer_durable_key"])
+
+    assert len(rows) == 4  # C1: 2 versions, C2: 1, unknown member
+    assert len({r["customer_sk"] for r in rows}) == len(rows)  # surrogate keys stay unique
+    assert all(len(keys) == 1 for keys in by_customer.values())
+    assert by_customer[None] == {UNKNOWN_KEY}
+    assert len({next(iter(keys)) for keys in by_customer.values()}) == len(by_customer)
+
+
 def test_joining_by_natural_key_would_double_count_scd2_customers(spark: SparkSession) -> None:
     """The trap BUSINESS_RULES.md warns about: always join facts to dim_customer by sk."""
     inputs = _sales_inputs(spark)
     sales = build_fact_sales(
-        inputs["orders"], inputs["items"], inputs["customers"], inputs["products"], inputs["stores"]
+        inputs["orders"],
+        inputs["items"],
+        inputs["customers"],
+        inputs["products"],
+        inputs["stores"],
+        birth_dates=customer_birth_dates(_customers(spark)),
     )
     dim = inputs["customers"]
     total = sales.agg(F.sum("net_amount")).first()[0]  # type: ignore[index]

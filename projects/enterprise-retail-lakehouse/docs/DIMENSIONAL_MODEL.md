@@ -31,7 +31,7 @@ Consequências do grain:
 
 | Dimensão | Grain | Natural key | Surrogate key | Histórico |
 |---|---|---|---|---|
-| `dim_customer` | uma versão de cliente | `customer_id` (+ `valid_from`) | `customer_sk` | **SCD Type 2** em `segment`, `city`, `state`, `region` |
+| `dim_customer` | uma versão de cliente | `customer_id` (+ `valid_from`) | `customer_sk` (versão); `customer_durable_key` (identidade) | **SCD Type 2** em `segment`, `city`, `state`, `region` |
 | `dim_product` | um produto | `product_id` | `product_sk` | SCD Type 1 |
 | `dim_store` | uma loja | `store_id` | `store_sk` | SCD Type 1 |
 | `dim_supplier` | um fornecedor | `supplier_id` | `supplier_sk` | SCD Type 1 |
@@ -44,6 +44,22 @@ Regras comuns:
 - **Membro desconhecido**: toda dimensão tem a linha `sk = -1` (`date_key = -1`). FK sem
   correspondência (ex.: cliente órfão mantido pela Silver como `WARNING`) aponta para ele —
   o fato nunca perde a linha.
+- **Faixa etária: atributo historizado × atributo derivado.** `dim_customer.age_band` é **historizada**:
+  a faixa no início da versão (`valid_from`), que fica fixa enquanto a versão vale. Uma versão aberta
+  em 2010, aos 19 anos, continua `18-24` num pedido de 2024. `fact_sales.customer_age_band` é **derivada**
+  por pedido: a idade na data de negócio do pedido. É ela que a análise de vendas por idade usa. Mesma
+  regra para as duas (`dimensions.age_band_at`): anos completos pelo calendário (o aniversário conta no
+  próprio dia; quem nasceu em 29/02 faz aniversário em 1º/03 nos anos comuns), faixas `18-24` … `65+`,
+  `unknown` sem data de nascimento ou com idade < 18. A data de nascimento vem da versão mais recente que a
+  tem na Silver (é um fato da pessoa, e uma correção vale para todos os pedidos), por `customer_id` (N:1,
+  sem multiplicar linhas), e não é gravada na Gold (PII). Pedido anterior ao cadastro também recebe a
+  faixa. Os outros fatos não têm a coluna: pagamento e entrega não são analisados por idade.
+- **Evento antes da primeira versão do cliente** (ADR 0003): a primeira versão começa em
+  `registered_at` (cadastro) e não é estendida para trás, porque os atributos daquele instante
+  não são conhecidos. O fato fica com `customer_sk = -1` (versão desconhecida, contado no
+  WARNING `unknown_member__customer_sk`) e com `customer_durable_key` do cliente, que é o mesmo
+  em todas as versões. Cliente inexistente: as duas chaves são `-1`. Um evento nunca recebe uma
+  versão posterior a ele; `valid_from` é inclusivo.
 - **PII**: `dim_customer` não tem nome, e-mail nem data de nascimento; guarda apenas faixa
   etária (skill `security`).
 - **Datas de negócio** em horário de Brasília: `date_key` é a data local do evento.
@@ -84,6 +100,8 @@ erDiagram
         int line_number PK
         int date_key FK
         bigint customer_sk FK
+        bigint customer_durable_key FK
+        string customer_age_band
         bigint product_sk FK
         bigint store_sk FK
         bigint supplier_sk FK
@@ -100,6 +118,7 @@ erDiagram
         string order_id
         int date_key FK
         bigint customer_sk FK
+        bigint customer_durable_key FK
         bigint store_sk FK
         string payment_method
         string payment_status
@@ -113,6 +132,7 @@ erDiagram
         int ship_date_key FK
         int delivery_date_key FK
         bigint customer_sk FK
+        bigint customer_durable_key FK
         bigint store_sk FK
         string carrier_id
         string shipment_status
@@ -131,6 +151,7 @@ erDiagram
     }
     dim_customer {
         bigint customer_sk PK
+        bigint customer_durable_key
         string customer_id
         string segment
         string city
@@ -187,6 +208,7 @@ erDiagram
 |---|---|---|
 | `order_items` → `orders` | N:1 | `order_id` único na Silver |
 | fato → `dim_customer` | N:1 | versão vigente no instante do evento (`valid_from ≤ t < valid_to`): intervalos sem sobreposição (testado) |
+| fato → identidade do cliente (`customer_durable_key`) | N:1 | pares distintos (`customer_id`, `customer_durable_key`): uma chave durável por cliente (testado) |
 | fato → `dim_product` / `dim_store` / `dim_supplier` | N:1 | natural key única (SCD1) |
 | `dim_product` → `dim_supplier` | N:1 | idem |
 

@@ -30,7 +30,7 @@ from iot_lakehouse.bronze.ingest import (
     utc,
 )
 from lakehouse_common.config import load_environment
-from lakehouse_common.observability import Layer, ObservabilitySink, track_run
+from lakehouse_common.observability import Layer, ObservabilitySink, new_run_id, track_run
 from lakehouse_common.quality import (
     CheckResult,
     Dimension,
@@ -84,7 +84,7 @@ def run_bronze(  # noqa: PLR0913 - keyword-only options of one run
     """Ingest every new file of each dataset. A FAILED dataset stops the run; a rerun resumes
     from the files not yet decided (nothing already appended is appended again)."""
     at = utc(ingestion_timestamp)
-    run_id = f"{at:%Y%m%dT%H%M%SZ}"
+    run_id = new_run_id(at)
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {target.namespace}")
     outcomes = []
     for dataset in datasets:

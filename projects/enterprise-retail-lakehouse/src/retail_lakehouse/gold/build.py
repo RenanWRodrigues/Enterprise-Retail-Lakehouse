@@ -20,6 +20,7 @@ from retail_lakehouse.gold.dimensions import (
     build_dim_product,
     build_dim_store,
     build_dim_supplier,
+    customer_birth_dates,
 )
 from retail_lakehouse.gold.facts import (
     build_fact_inventory_movements,
@@ -73,7 +74,12 @@ def build_gold(
         "dim_store": dim_store,
         "dim_supplier": dim_supplier,
         "fact_sales": build_fact_sales(
-            orders, silver["order_items"], dim_customer, dim_product, dim_store
+            orders,
+            silver["order_items"],
+            dim_customer,
+            dim_product,
+            dim_store,
+            birth_dates=customer_birth_dates(silver["customers"]),
         ),
         "fact_payments": build_fact_payments(silver["payments"], orders, dim_customer, dim_store),
         "fact_shipments": build_fact_shipments(

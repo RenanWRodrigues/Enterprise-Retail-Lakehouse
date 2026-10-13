@@ -14,12 +14,18 @@ dbutils.widgets.dropdown("environment", "databricks", ["databricks", "smoke", "l
 # COMMAND ----------
 
 # Until the package is installable, import it from the repository (Git folder).
-import sys
+# MAGIC %pip install --quiet --no-deps /Volumes/workspace/libs/wheels/databricks_lakehouse_portfolio-0.1.0-py3-none-any.whl
+
+# COMMAND ----------
+
+dbutils.library.restartPython()  # the installed packages are importable from here on
+
+# COMMAND ----------
+
 from pathlib import Path
 
-PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/gold -> project root
-REPO_ROOT = PROJECT_ROOT.parents[1]
-sys.path[:0] = [str(PROJECT_ROOT / "src"), str(REPO_ROOT / "shared" / "src")]
+PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/gold -> project root (config files)
+REPO_ROOT = PROJECT_ROOT.parents[1]  # shared config files
 
 # COMMAND ----------
 
@@ -28,21 +34,37 @@ from datetime import UTC, datetime
 from iot_lakehouse.gold.pipeline import load_gold_settings, run_gold
 from iot_lakehouse.silver.cmms import run_cmms_silver
 from iot_lakehouse.silver.pipeline import load_silver_settings
-from lakehouse_common.observability import DeltaObservabilitySink
+from lakehouse_common.observability.ops import load_ops_namespace, standard_sink
 
 environment = dbutils.widgets.get("environment")
 silver = load_silver_settings(PROJECT_ROOT / "config" / "silver.toml", environment)
 gold = load_gold_settings(PROJECT_ROOT / "config" / "gold.toml", environment)
 now = datetime.now(UTC)
+OPS_NAMESPACE = load_ops_namespace(  # central operational record (docs/OBSERVABILITY.md §8)
+    REPO_ROOT / "shared" / "config" / "ops.toml", dbutils.widgets.get("environment")
+)
 run_cmms_silver(
     spark,
     bronze=silver.bronze,
     silver_namespace=gold.silver_namespace,
     at=now,
-    sink=DeltaObservabilitySink(spark, gold.silver_namespace),
+    sink=standard_sink(
+        spark,
+        layer_namespace=gold.silver_namespace,
+        ops_namespace=OPS_NAMESPACE,
+        environment=dbutils.widgets.get("environment"),
+    ),
 )
 rows = run_gold(
-    spark, settings=gold, now=now, sink=DeltaObservabilitySink(spark, gold.gold_namespace)
+    spark,
+    settings=gold,
+    now=now,
+    sink=standard_sink(
+        spark,
+        layer_namespace=gold.gold_namespace,
+        ops_namespace=OPS_NAMESPACE,
+        environment=dbutils.widgets.get("environment"),
+    ),
 )
 
 # COMMAND ----------

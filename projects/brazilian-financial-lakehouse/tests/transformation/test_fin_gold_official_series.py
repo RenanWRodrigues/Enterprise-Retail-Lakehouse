@@ -10,6 +10,8 @@ official aggregate:
 - ``usd_brl`` (daily -> month, last), input SGS 1: SGS 3696, end of period (4 dp);
 - ``inflation_12m`` (monthly -> 12 months), input IBGE 1737 v63: IBGE 1737 v2265 (2 dp);
 - ``selic_daily_annualized_pct_year``, input SGS 11: SGS 1178, annualized base 252 (2 dp).
+- ``interest_rates`` with the Selic target, input SGS 432: every calendar day kept as
+  published, 0.10 pp above SGS 1178 on business days, Copom steps flagged.
 
 SGS metadata is not exposed by the API: 3698 and 3696 were identified because their values equal
 the mean and the last value of SGS 1 in every month.
@@ -22,8 +24,9 @@ published precision before comparing. No network.
 import json
 from calendar import monthrange
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +93,10 @@ def _silver_row(indicator_id: str, day: date, value: Decimal) -> tuple[Any, ...]
 def official_silver(spark: SparkSession) -> Iterator[DataFrame]:
     rows = [
         *(_silver_row("selic_daily", _sgs_date(r["data"]), Decimal(r["valor"])) for r in _sgs(11)),
+        *(
+            _silver_row("selic_target", _sgs_date(r["data"]), Decimal(r["valor"]))
+            for r in _sgs(432)
+        ),
         *(_silver_row("usd_brl_sell", _sgs_date(r["data"]), Decimal(r["valor"])) for r in _sgs(1)),
         *(_silver_row("ipca_monthly", month, value) for month, value in _ibge("63").items()),
     ]
@@ -159,3 +166,57 @@ def test_daily_selic_annualization_matches_sgs_1178(official_silver: DataFrame) 
         if _rounded(rates[day], CENTS) != expected
     }
     assert mismatches == {}
+
+
+def test_selic_target_is_kept_for_every_calendar_day_without_filling(
+    official_silver: DataFrame,
+) -> None:
+    """GOLD.md §"meta Selic nos fins de semana": SGS 432 itself publishes every calendar day."""
+    rows = build_interest_rates(official_silver).filter("year(reference_date) IN (2024, 2025)")
+    target_days = rows.filter("selic_target_pct_year IS NOT NULL")
+    weekends = target_days.filter("dayofweek(reference_date) IN (1, 7)")
+
+    assert target_days.count() == len(_sgs(432)) == 731
+    assert weekends.filter("selic_daily_pct_day IS NOT NULL").count() == 0  # SGS 11: business days
+    calendar = [date(2024, 1, 1) + timedelta(days=i) for i in range(731)]
+    assert weekends.count() == sum(day.isoweekday() > 5 for day in calendar)  # all from source
+
+
+def test_target_minus_effective_selic_is_the_published_spread(
+    official_silver: DataFrame,
+) -> None:
+    """Three official series on one row: target (432) minus our annualized SGS 11 equals the
+    0.10 pp the captured responses show between 432 and 1178 on all 252 business days of 2025,
+    so the full join on ``reference_date`` lines the series up (no shifted day at a Copom step)."""
+    rows = {
+        row.reference_date: row
+        for row in build_interest_rates(official_silver)
+        .filter("reference_date >= '2025-01-01'")
+        .collect()
+    }
+    effective = {_sgs_date(r["data"]) for r in _sgs(1178)}
+    spreads = {
+        _rounded(rows[day].selic_target_pct_year, CENTS)
+        - _rounded(rows[day].selic_daily_annualized_pct_year, CENTS)
+        for day in effective
+    }
+    assert spreads == {Decimal("0.10")}
+
+
+def test_copom_changes_are_flagged_on_the_days_the_target_moved(
+    official_silver: DataFrame,
+) -> None:
+    published = _sgs(432)
+    moved = {
+        _sgs_date(today["data"]): Decimal(today["valor"]) - Decimal(before["valor"])
+        for before, today in pairwise(published)
+        if today["valor"] != before["valor"]
+    }
+    flagged = {
+        row.reference_date: _rounded(row.selic_target_change_pp, CENTS)
+        for row in build_interest_rates(official_silver).filter("is_copom_change").collect()
+    }
+
+    assert flagged == moved
+    assert len(moved) == 10  # 2024-2025: 3 cuts, then 7 hikes up to 15.00
+    assert {day.isoweekday() for day in moved} == {4}  # effective the day after the meeting

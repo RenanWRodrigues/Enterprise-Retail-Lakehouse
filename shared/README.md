@@ -17,10 +17,12 @@ registrada em `docs/ARCHITECTURE.md` §7.
 
 | Subpacote | Candidatos (só após cumprir a regra) |
 |---|---|
-| `logging` | configuração de logging estruturado |
+| `logging` | ✅ logging estruturado JSON, redação e webhook de alertas, usados pelos 3 projetos (decisão 082; `docs/OBSERVABILITY.md` §6) |
 | `quality` | ✅ framework de checks de qualidade (ADR 016; `docs/DATA_QUALITY.md` §5) |
+| `fingerprint` | ✅ impressão digital de linha (SHA-256, NULL posicional), usada por Retail (`_row_hash`) e IoT (`_content_hash`); contrato no módulo (decisão 088) |
 | `spark` | helpers de escrita Delta idempotente (sessão de teste vive em `lakehouse_testing`) |
 | `observability` | ✅ `pipeline_runs` / `data_quality_results`, usados pelos 3 projetos (ADR 044, 055; `docs/OBSERVABILITY.md`) |
+| `incremental` | **proposto** (ADR 0004, aguarda aceite): descoberta de unidades novas do Bronze por CDF + checkpoint, usada por Retail e IoT |
 
 ## `lakehouse_testing` (somente testes)
 

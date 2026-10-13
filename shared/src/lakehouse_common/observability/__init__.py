@@ -6,15 +6,19 @@
 ...     step.record_quality(run_checks(orders, checks, ...))  # raises on CRITICAL
 """
 
+from lakehouse_common.logging.redaction import mask_secrets
 from lakehouse_common.observability.runs import (
     PIPELINE_RUNS_COLUMNS,
     PIPELINE_RUNS_SCHEMA,
+    RUN_ID_PATTERN,
     Layer,
     ObservabilitySink,
     PipelineRun,
     RunStatus,
     RunTracker,
+    new_run_id,
     run_record,
+    run_started_label,
     runs_to_dataframe,
     safe_error_message,
     track_run,
@@ -32,6 +36,7 @@ __all__ = [
     "PIPELINE_RUNS_COLUMNS",
     "PIPELINE_RUNS_SCHEMA",
     "PIPELINE_RUNS_TABLE",
+    "RUN_ID_PATTERN",
     "DeltaObservabilitySink",
     "InMemoryObservabilitySink",
     "JsonLinesObservabilitySink",
@@ -40,7 +45,10 @@ __all__ = [
     "PipelineRun",
     "RunStatus",
     "RunTracker",
+    "mask_secrets",
+    "new_run_id",
     "run_record",
+    "run_started_label",
     "runs_to_dataframe",
     "safe_error_message",
     "track_run",

@@ -115,6 +115,34 @@ class _Line:
         return self.product.list_price * self.quantity - self.discount
 
 
+@dataclass(frozen=True, slots=True)
+class _OrderDraw:
+    """Every random choice of one order. Drawn in one place and in a fixed order: the order of
+    the draws is what makes the generator reproducible (same seed, same rows)."""
+
+    order_id: str
+    ordered_at: datetime
+    channel: str
+    customer: Customer
+    store: Store
+    lines: list[_Line]
+    freight: Decimal
+    amount: Decimal
+    method: str
+    installments: int
+    paid_at: datetime
+    cancelled: bool
+    retried: bool
+    wants_return: bool
+    shipped_at: datetime
+    delivered_at: datetime
+    carrier: str
+
+    @property
+    def is_online(self) -> bool:
+        return self.channel != "store"
+
+
 class _Transactions:
     def __init__(self, config: GenerationConfig, master: MasterData, emit: EmitFn) -> None:
         self._config = config
@@ -268,7 +296,19 @@ class _Transactions:
             processed_at=ts(at),
         ))  # fmt: skip
 
-    def _order(self, ordered_at: datetime) -> None:  # noqa: PLR0912, PLR0915 - one order lifecycle
+    def _order(self, ordered_at: datetime) -> None:
+        """One order's lifecycle: draws, status, then its rows in a fixed order (orders, items,
+        payments, shipment, stock movements), so every id counter advances as before."""
+        draw = self._draw_order(ordered_at)
+        status, shipment_status, returned_at = self._lifecycle(draw)
+        self._emit_order_rows(draw, status)
+        self._emit_payments(draw, status, returned_at)
+        if shipment_status is not None:
+            self._emit_shipment(draw, shipment_status)
+        self._move_stock(draw, status, returned_at)
+
+    def _draw_order(self, ordered_at: datetime) -> _OrderDraw:
+        """Every random draw of the order, in the original sequence (do not reorder)."""
         rng = self._rng
         order_id = self._next_id("ORD", 8)
         channel = rng.choices(CHANNELS, weights=CHANNEL_WEIGHTS)[0]
@@ -301,40 +341,45 @@ class _Transactions:
             days=rng.randint(transit_low, transit_high), hours=rng.randint(0, 10)
         )
         carrier = rng.choice(CARRIERS)
+        return _OrderDraw(order_id, ordered_at, channel, customer, store, lines, freight, amount,
+                          method, installments, paid_at, cancelled, retried, wants_return,
+                          shipped_at, delivered_at, carrier)  # fmt: skip
 
-        returned_at: datetime | None = None
-        shipment_status: str | None = None
-        if cancelled:
-            status = "cancelled"
-        elif paid_at > self._window_end:
-            status = "created"
-        elif not is_online:
-            status = "delivered"
-        elif shipped_at > self._window_end:
-            status = "paid"
-        elif delivered_at > self._window_end:
-            status, shipment_status = "shipped", "in_transit"
-        elif wants_return and delivered_at + RETURN_DELAY <= self._window_end:
-            status, shipment_status = "returned", "returned"
-            returned_at = delivered_at + RETURN_DELAY
-        else:
-            status, shipment_status = "delivered", "delivered"
+    def _lifecycle(  # noqa: PLR0911 - one return per lifecycle stage (a decision table)
+        self, draw: _OrderDraw
+    ) -> tuple[str, str | None, datetime | None]:
+        """Order status, shipment status and return time, as of the end of the window."""
+        if draw.cancelled:
+            return "cancelled", None, None
+        if draw.paid_at > self._window_end:
+            return "created", None, None
+        if not draw.is_online:
+            return "delivered", None, None
+        if draw.shipped_at > self._window_end:
+            return "paid", None, None
+        if draw.delivered_at > self._window_end:
+            return "shipped", "in_transit", None
+        returned_at = draw.delivered_at + RETURN_DELAY
+        if draw.wants_return and returned_at <= self._window_end:
+            return "returned", "returned", returned_at
+        return "delivered", "delivered", None
 
+    def _emit_order_rows(self, draw: _OrderDraw, status: str) -> None:
         self._emit("orders", _row(
             "orders",
-            order_id=order_id,
-            customer_id=customer.customer_id,
-            store_id=store.store_id,
-            channel=channel,
+            order_id=draw.order_id,
+            customer_id=draw.customer.customer_id,
+            store_id=draw.store.store_id,
+            channel=draw.channel,
             order_status=status,
-            order_timestamp=ts(ordered_at),
+            order_timestamp=ts(draw.ordered_at),
             currency="BRL",
-            freight_amount=f"{freight:.2f}",
+            freight_amount=f"{draw.freight:.2f}",
         ))  # fmt: skip
-        for number, line in enumerate(lines, start=1):
+        for number, line in enumerate(draw.lines, start=1):
             self._emit("order_items", _row(
                 "order_items",
-                order_id=order_id,
+                order_id=draw.order_id,
                 line_number=str(number),
                 product_id=line.product.product_id,
                 quantity=str(line.quantity),
@@ -342,35 +387,42 @@ class _Transactions:
                 discount_amount=f"{line.discount:.2f}",
             ))  # fmt: skip
 
-        terms = _PaymentTerms(order_id, method, installments, amount)
+    def _emit_payments(self, draw: _OrderDraw, status: str, returned_at: datetime | None) -> None:
+        """Declined attempt (cancelled or retried), approval, refund of a return."""
+        terms = _PaymentTerms(draw.order_id, draw.method, draw.installments, draw.amount)
         if status == "cancelled":
-            self._payment(terms, "declined", paid_at)
+            self._payment(terms, "declined", draw.paid_at)
         elif status != "created":
-            if retried:
+            paid_at = draw.paid_at
+            if draw.retried:
                 self._payment(terms, "declined", paid_at)
                 paid_at += RETRY_DELAY
             self._payment(terms, "approved", paid_at)
             if returned_at is not None:
                 self._payment(terms, "refunded", returned_at)
 
-        if shipment_status is not None:
-            self._emit("shipments", _row(
-                "shipments",
-                shipment_id=self._next_id("SHP", 8),
-                order_id=order_id,
-                carrier_id=carrier,
-                shipment_status=shipment_status,
-                shipped_at=ts(shipped_at),
-                delivered_at=None if shipment_status == "in_transit" else ts(delivered_at),
-                freight_amount=f"{freight:.2f}",
-            ))  # fmt: skip
+    def _emit_shipment(self, draw: _OrderDraw, shipment_status: str) -> None:
+        self._emit("shipments", _row(
+            "shipments",
+            shipment_id=self._next_id("SHP", 8),
+            order_id=draw.order_id,
+            carrier_id=draw.carrier,
+            shipment_status=shipment_status,
+            shipped_at=ts(draw.shipped_at),
+            delivered_at=None if shipment_status == "in_transit" else ts(draw.delivered_at),
+            freight_amount=f"{draw.freight:.2f}",
+        ))  # fmt: skip
 
+    def _move_stock(self, draw: _OrderDraw, status: str, returned_at: datetime | None) -> None:
+        """A kept order sells its lines; a returned one also puts them back."""
         if status != "cancelled":
-            for line in lines:
-                self._sell(store, line, ordered_at, order_id)
+            for line in draw.lines:
+                self._sell(draw.store, line, draw.ordered_at, draw.order_id)
         if returned_at is not None:
-            for line in lines:
-                self._movement(store, line.product, "return", line.quantity, returned_at, order_id)
+            for line in draw.lines:
+                self._movement(
+                    draw.store, line.product, "return", line.quantity, returned_at, draw.order_id
+                )
 
 
 def generate_retail_dataset(config: GenerationConfig, sink: Sink) -> GenerationSummary:

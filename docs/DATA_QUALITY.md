@@ -188,6 +188,10 @@ Cada projeto declara suas regras em `src/<pacote>/quality/suites.py`; os testes 
 | | `unknown_customer` (cliente inexistente) | WARNING (ADR 007) |
 | | `unknown_customer_systemic` (> 5% dos pedidos) | CRITICAL |
 | produto inexistente | `missing_product`, `unknown_product`, `unknown_product_systemic` | ERROR / WARNING / CRITICAL |
+| remessa de pedido inexistente (`shipments.order_id`) | `missing_order`, `unknown_order`, `unknown_order_systemic` | ERROR / WARNING / CRITICAL |
+| movimento de estoque de produto ou loja inexistente (`inventory_movements.product_id`, `.store_id`) | `missing_<product\|store>`, `unknown_<…>`, `unknown_<…>_systemic` | ERROR / WARNING / CRITICAL |
+| | `inventory_movements.reference_id` é opcional (NULL no saldo de abertura) e aponta para documentos de tipos diferentes: sem checagem de FK | — |
+| diagnóstico | `unknown_*` e `unknown_*_systemic` levam em `details` até 5 chaves órfãs distintas, em ordem crescente (`examples: …`) | — |
 | valores negativos | `negative__<coluna>` (preços, custo, frete, desconto, pagamento); `non_positive__quantity` | ERROR |
 | | `discount_exceeds_line` (desconto maior que a linha) | ERROR |
 | duplicados | `duplicate__<entidade>` na chave de negócio (`BUSINESS_KEYS`), após `keep_first` | CRITICAL |
@@ -209,6 +213,7 @@ Implementação e ordem das regras: [Silver do Retail](../projects/enterprise-re
 | integridade referencial | `fk__<coluna>__<dimensão>` em todas as relações de `FOREIGN_KEYS` | CRITICAL |
 | órfão mantido (cliente, produto ou loja desconhecido) | `unknown_member__<coluna>` | WARNING |
 | fato com data fora do calendário (chave `-1`, data do evento preservada) | `out_of_calendar__<coluna de data>` | WARNING |
+| R3: snapshot de estoque × Σ movimentos até a data do snapshot (check set `inventory_reconciliation`, entrada vinda da Silver, não publicada) | `r3__snapshot_matches_movements` / `r3__snapshot_matches_movements_systemic` (> 5% das chaves) | ERROR / CRITICAL |
 
 Avaliado sobre as tabelas em staging antes de publicar qualquer uma; CRITICAL preserva a Gold
 anterior. Detalhes: [DIMENSIONAL_MODEL.md §6](../projects/enterprise-retail-lakehouse/docs/DIMENSIONAL_MODEL.md).

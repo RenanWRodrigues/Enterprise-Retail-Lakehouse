@@ -15,28 +15,42 @@ dbutils.widgets.dropdown("environment", "databricks", ["databricks", "smoke", "l
 # COMMAND ----------
 
 # Until the package is installable, import it from the repository (Git folder).
-import sys
+# MAGIC %pip install --quiet --no-deps /Volumes/workspace/libs/wheels/databricks_lakehouse_portfolio-0.1.0-py3-none-any.whl
+
+# COMMAND ----------
+
+dbutils.library.restartPython()  # the installed packages are importable from here on
+
+# COMMAND ----------
+
 from pathlib import Path
 
-PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/silver -> project root
-REPO_ROOT = PROJECT_ROOT.parents[1]
-sys.path[:0] = [str(PROJECT_ROOT / "src"), str(REPO_ROOT / "shared" / "src")]
+PROJECT_ROOT = Path.cwd().parents[1]  # notebooks/silver -> project root (config files)
+REPO_ROOT = PROJECT_ROOT.parents[1]  # shared config files
 
 # COMMAND ----------
 
 from datetime import UTC, datetime
 
 from iot_lakehouse.silver.pipeline import load_silver_settings, run_silver
-from lakehouse_common.observability import DeltaObservabilitySink
+from lakehouse_common.observability.ops import load_ops_namespace, standard_sink
 
 settings = load_silver_settings(
     PROJECT_ROOT / "config" / "silver.toml", dbutils.widgets.get("environment")
+)
+OPS_NAMESPACE = load_ops_namespace(  # central operational record (docs/OBSERVABILITY.md §8)
+    REPO_ROOT / "shared" / "config" / "ops.toml", dbutils.widgets.get("environment")
 )
 files = run_silver(
     spark,
     settings=settings,
     ingestion_timestamp=datetime.now(UTC),
-    sink=DeltaObservabilitySink(spark, settings.target.namespace),  # pipeline_runs
+    sink=standard_sink(
+        spark,
+        layer_namespace=settings.target.namespace,
+        ops_namespace=OPS_NAMESPACE,
+        environment=dbutils.widgets.get("environment"),
+    ),  # pipeline_runs
 )
 
 # COMMAND ----------

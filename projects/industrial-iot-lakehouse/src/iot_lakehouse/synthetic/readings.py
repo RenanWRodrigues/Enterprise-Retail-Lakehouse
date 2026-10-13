@@ -162,22 +162,27 @@ def _with_interval(  # noqa: PLR0913, PLR0917 - column names of one interval joi
     )
 
 
-def build_readings(
-    spark: SparkSession, config: IotGenerationConfig, master: MasterData
-) -> DataFrame:
-    """All readings with ground-truth labels and internal columns (lazy DataFrame)."""
-    seed, interval = config.seed, config.sampling_interval_seconds
-    threshold = config.lateness_threshold_minutes * 60
-    keys = (F.col("sensor_id"), F.col("step"))
+def _keys() -> tuple[Column, Column]:
+    """The per-reading key of every random draw: (sensor, step)."""
+    return F.col("sensor_id"), F.col("step")
 
+
+def _grid(spark: SparkSession, config: IotGenerationConfig, master: MasterData) -> DataFrame:
+    """One row per (sampling step, sensor) while the sensor's equipment is online."""
     grid = (
         spark.range(config.steps)
         .withColumnRenamed("id", "step")
         .crossJoin(F.broadcast(_sensors(spark, master)))
-        .withColumn("epoch", F.lit(int(config.start.timestamp())) + F.col("step") * interval)
+        .withColumn(
+            "epoch",
+            F.lit(int(config.start.timestamp())) + F.col("step") * config.sampling_interval_seconds,
+        )
     )
-    grid = _drop_offline(grid, spark, master)
+    return _drop_offline(grid, spark, master)
 
+
+def _with_episodes(spark: SparkSession, grid: DataFrame, master: MasterData) -> DataFrame:
+    """The active degradation (per equipment and sensor type) and drift (per sensor) episodes."""
     degradations = _intervals(
         spark,
         [
@@ -214,7 +219,7 @@ def build_readings(
             for d in master.drift_episodes
         ],
     )
-    grid = _with_interval(
+    return _with_interval(
         grid,
         drifts,
         F.col("sensor_id") == F.col("_key"),
@@ -223,6 +228,11 @@ def build_readings(
         "drift_progress",
     )
 
+
+def _with_values(grid: DataFrame, config: IotGenerationConfig) -> DataFrame:
+    """The physical signal: diurnal baseline, degradation, drift, noise, then spikes and
+    impossible values (labelled)."""
+    seed, keys = config.seed, _keys()
     local_hour = (
         F.pmod(F.col("epoch") + SITE_UTC_OFFSET_SECONDS, F.lit(SECONDS_PER_DAY)) / SECONDS_PER_HOUR
     )
@@ -246,7 +256,7 @@ def build_readings(
         uniform(seed, "impossible_side", *keys) < HALF, F.col("physical_max") * 2 + 1
     ).otherwise(F.col("physical_min") - (F.col("physical_max") - F.col("physical_min")) - 1)
 
-    readings = (
+    return (
         grid.withColumn("baseline_value", baseline)
         .withColumn("drift_offset", drift_offset)
         .withColumn("residual_sd", noise)
@@ -270,6 +280,12 @@ def build_readings(
         )
     )
 
+
+def _with_arrival(readings: DataFrame, config: IotGenerationConfig) -> DataFrame:
+    """When each reading reaches the platform: on time, out of order or late, and resent
+    copies (labelled), plus ids and the event/ingestion timestamps."""
+    seed, keys, interval = config.seed, _keys(), config.sampling_interval_seconds
+    threshold = config.lateness_threshold_minutes * 60
     late = uniform(seed, "late", *keys) < config.late_rate
     out_of_order = ~late & (uniform(seed, "out_of_order", *keys) < config.out_of_order_rate)
     delay_draw = uniform(seed, "delay", *keys)
@@ -283,7 +299,7 @@ def build_readings(
     resend_delay = RESEND_DELAY_SECONDS[0] + F.floor(
         uniform(seed, "resend_delay", *keys) * (RESEND_DELAY_SECONDS[1] - RESEND_DELAY_SECONDS[0])
     )
-    readings = (
+    return (
         readings.withColumn("is_late", late)
         .withColumn("is_out_of_order", out_of_order)
         .withColumn(
@@ -309,6 +325,18 @@ def build_readings(
         )
         .withColumn("degradation_change", F.coalesce(F.col("degradation_change"), F.lit(0.0)))
     )
+
+
+def build_readings(
+    spark: SparkSession, config: IotGenerationConfig, master: MasterData
+) -> DataFrame:
+    """All readings with ground-truth labels and internal columns (lazy DataFrame).
+
+    Steps: the (step, sensor) grid of online equipment, its degradation and drift episodes, the
+    measured values, then the arrival behaviour (late, out of order, resent).
+    """
+    grid = _with_episodes(spark, _grid(spark, config, master), master)
+    readings = _with_arrival(_with_values(grid, config), config)
     return readings.select(*READING_COLUMNS, *LABEL_COLUMNS, *INTERNAL_COLUMNS)
 
 
