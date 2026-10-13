@@ -322,8 +322,8 @@ do `make install`): exit 0 em 51 s, `pip check` limpo; **6 dependências transit
 verdes; Spark (shared transformation, `test_quality_checks.py`, `test_inventory_r3.py`) 41 passed.
 Versões locais: Python 3.12.7, PySpark 4.0.4, delta-spark 4.0.1, Temurin 21.0.11.
 
-**Descoberta incremental de lotes (Retail) e arquivos (IoT)** (ADR 0004 **proposto**, decisão 080;
-sem commit): `lakehouse_common.incremental` (CDF dos commits após o checkpoint
+**Descoberta incremental de lotes (Retail) e arquivos (IoT)** (ADR 0004 **aceito em 2026-10-13**, decisão 080;
+commit `70c01a8`): `lakehouse_common.incremental` (CDF dos commits após o checkpoint
 `silver_discovery_checkpoints`, fallback para varredura com motivo, checkpoint monotônico gravado
 depois da marcação), `plan_batches`/`plan_files`, `rediscover` e `reprocess`, Bronze novo com CDF.
 

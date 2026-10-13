@@ -1,8 +1,8 @@
 # 0004 — Descoberta incremental de lotes do Bronze (Retail e IoT)
 
-Status: **proposto**. Aguarda o aceite do responsável, exigido pela regra de admissão do
-`shared/README.md` para código novo em `lakehouse_common`.
-Data: 2026-10-12
+Status: aceito (2026-10-13, pelo responsável, conforme a regra de admissão do
+`shared/README.md` para código novo em `lakehouse_common`)
+Data: 2026-10-12 (proposto) · 2026-10-13 (aceito)
 Altera: `pending_batches` (Retail) e `pending_files` (IoT), que liam a tabela Bronze inteira a cada
 execução.
 
